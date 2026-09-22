@@ -9,7 +9,7 @@ ARG BUILD_ARCH=amd64
 
 LABEL io.hass.name="AI Usage Dashboard" \
     io.hass.description="Poll AI provider usage and quota and publish Home Assistant MQTT discovery sensors." \
-    io.hass.type="addon" \
+    io.hass.type="app" \
     io.hass.version="${BUILD_VERSION}" \
     io.hass.arch="${BUILD_ARCH}"
 
@@ -18,11 +18,9 @@ ENV LANG=C.UTF-8
 
 WORKDIR /app
 
-# The base image does not guarantee a Python runtime, so install it
+# The Home Assistant base image is Alpine-based. Install the runtime
 # explicitly along with pip.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends python3 python3-pip \
-    && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache python3 py3-pip
 
 # Vendored copy of the collector package (kept in sync with the repo root
 # ai_usage_dashboard/ directory; tests/test_addon.py enforces equality).
