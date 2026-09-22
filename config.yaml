@@ -1,0 +1,52 @@
+# Home Assistant add-on metadata for AI Usage Dashboard.
+# Production collector deployment: local collector -> MQTT discovery
+# -> Home Assistant dashboard. Configure via the add-on Configuration tab;
+# credentials are *names* resolved from a secrets env file (see README.md).
+name: AI Usage Dashboard
+version: 0.1.0
+slug: ai_usage_dashboard
+description: Poll AI provider usage and quota and publish Home Assistant MQTT discovery sensors.
+arch:
+  - aarch64
+  - amd64
+  - armhf
+  - armv7
+  - i386
+startup: services
+boot: auto
+init: false
+hassio_api: false
+homeassistant_api: false
+host_network: false
+# Least-privilege mount for the user-editable secrets file. The per-add-on
+# addon_config directory is mounted in the container at /config; nothing
+# else from the Home Assistant configuration is mapped.
+map:
+  - type: addon_config
+    read_only: false
+    path: /config
+options:
+  mqtt_host: ""
+  mqtt_port: 1883
+  mqtt_username: ""
+  mqtt_password_env: MQTT_PASSWORD
+  secrets_file: /config/secrets.env
+  poll_interval: 900
+  discovery_prefix: homeassistant
+  data_dir: /data
+  accounts: []
+schema:
+  mqtt_host: str?
+  mqtt_port: int(1,65535)?
+  mqtt_username: str?
+  mqtt_password_env: str?
+  secrets_file: str?
+  poll_interval: int(60,86400)?
+  discovery_prefix: str?
+  data_dir: str?
+  accounts:
+    - provider: str
+      account_id: str
+      display_name: str?
+      credential_env: str
+      options: dict?
