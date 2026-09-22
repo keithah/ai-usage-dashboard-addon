@@ -1,0 +1,30 @@
+name: Home Assistant app lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  find:
+    runs-on: ubuntu-latest
+    outputs:
+      apps: ${{ steps.apps.outputs.addons_list }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: apps
+        uses: home-assistant/actions/helpers/find-addons@master
+
+  lint:
+    needs: find
+    if: needs.find.outputs.apps != '[]'
+    strategy:
+      matrix:
+        path: ${{ fromJson(needs.find.outputs.apps) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: frenck/action-addon-linter@v2.21
+        with:
+          path: ./${{ matrix.path }}
