@@ -43,4 +43,3 @@ schema:
       account_id: str
       display_name: str?
       credential_env: str
-      options: dict?
