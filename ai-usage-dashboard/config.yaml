@@ -13,7 +13,6 @@ arch:
 startup: application
 boot: auto
 init: false
-image: ghcr.io/keithah/ai-usage-dashboard-{arch}
 # Least-privilege mount for the user-editable secrets file. The per-add-on
 # addon_config directory is mounted in the container at /config; nothing
 # else from the Home Assistant configuration is mapped.
