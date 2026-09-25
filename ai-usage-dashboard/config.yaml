@@ -10,8 +10,6 @@ url: https://github.com/keithah/ai-usage-dashboard-addon
 arch:
   - aarch64
   - amd64
-startup: application
-boot: auto
 init: false
 # Least-privilege mount for the user-editable secrets file. The per-add-on
 # addon_config directory is mounted in the container at /config; nothing
