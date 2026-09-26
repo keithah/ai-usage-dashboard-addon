@@ -146,8 +146,15 @@ def _first_set(*values: object) -> object:
 def _account_options(raw: object, where: str) -> dict:
     if raw is None:
         return {}
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise AddonOptionsError(
+                f"{where}: 'options_json' must contain a JSON object ({exc.msg})"
+            ) from None
     if not isinstance(raw, dict):
-        raise AddonOptionsError(f"{where}: 'options' must be a mapping")
+        raise AddonOptionsError(f"{where}: account options must be a mapping")
     out: dict = {}
     for key, value in raw.items():
         lowered = str(key).lower()

@@ -1,7 +1,7 @@
 """Provider registry."""
 from __future__ import annotations
 
-from . import alibaba_coding_plan, anthropic, deepseek, kimi, muse_code, opencode_go, openai
+from . import alibaba_coding_plan, anthropic, deepseek, grok, kimi, muse_code, opencode_go, openai
 
 _ADAPTERS = {
     "openai": openai.Adapter,
@@ -11,6 +11,7 @@ _ADAPTERS = {
     "opencode_go": opencode_go.Adapter,
     "muse_code": muse_code.Adapter,
     "alibaba_coding_plan": alibaba_coding_plan.Adapter,
+    "grok": grok.Adapter,
 }
 
 

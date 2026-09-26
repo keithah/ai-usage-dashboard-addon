@@ -1,5 +1,10 @@
 """Alibaba Coding Plan adapter: subscription quota via the official CLI.
 
+Setup Instructions:
+1. Install the `bl` CLI from Alibaba Cloud Model Studio
+2. Configure your DashScope API key in secrets.env
+3. Set opt_in: true in the provider options to enable polling
+
 Official documented usage command: ``bl usage coding-plan``, which reports
 5-hour, weekly, and monthly usage. The official docs do not establish a
 stable JSON schema for that command (and do not guarantee

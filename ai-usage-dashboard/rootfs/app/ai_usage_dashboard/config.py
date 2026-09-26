@@ -17,6 +17,7 @@ SUPPORTED_PROVIDERS = (
     "opencode_go",
     "muse_code",
     "alibaba_coding_plan",
+    "grok",
 )
 
 

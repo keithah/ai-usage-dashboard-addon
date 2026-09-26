@@ -70,8 +70,18 @@ class SafeHttpClient:
     def get(self, url: str, headers: dict | None = None) -> HttpResponse:
         return self.request("GET", url, headers=headers)
 
-    def request(self, method: str, url: str, headers: dict | None = None) -> HttpResponse:
+    def post(self, url: str, headers: dict | None = None, json: dict | None = None) -> HttpResponse:
+        return self.request("POST", url, headers=headers, json=json)
+
+    def request(self, method: str, url: str, headers: dict | None = None, json: dict | None = None) -> HttpResponse:
         safe_headers = _redact_headers(headers or {})
+        request_body = None
+        if json is not None:
+            import json as json_mod
+            request_body = json_mod.dumps(json).encode("utf-8")
+            if not headers or not any(k.lower() == "content-type" for k in headers):
+                headers = dict(headers or {})
+                headers["Content-Type"] = "application/json"
         attempts = 0
         while True:
             attempts += 1
@@ -79,7 +89,7 @@ class SafeHttpClient:
                 if self.handler is not None:
                     resp = self.handler(method, url, headers or {}, self.timeout)  # type: ignore[operator]
                 else:
-                    resp = self._perform(method, url, headers or {})
+                    resp = self._perform(method, url, headers or {}, request_body)
             except (TimeoutError, ConnectionError, OSError) as exc:
                 if attempts > self.max_retries:
                     raise HttpTransientError(
@@ -126,8 +136,8 @@ class SafeHttpClient:
             _ = safe_headers
             return resp
 
-    def _perform(self, method: str, url: str, headers: dict) -> HttpResponse:
-        req = urllib.request.Request(url, method=method, headers=dict(headers))
+    def _perform(self, method: str, url: str, headers: dict, request_body: bytes | None = None) -> HttpResponse:
+        req = urllib.request.Request(url, method=method, headers=dict(headers), data=request_body)
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as fh:
                 status = getattr(fh, "status", 200)

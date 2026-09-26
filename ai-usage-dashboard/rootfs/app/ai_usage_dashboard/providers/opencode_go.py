@@ -1,5 +1,10 @@
 """OpenCode Go adapter: no live quota polling.
 
+Setup Instructions:
+1. Install the `opencode` CLI from https://opencode.ai
+2. Authenticate with your Go subscription credentials
+3. Note: This provider only tracks local session statistics, not subscription quota
+
 Authoritative findings: the official docs expose authenticated web-console
 usage at https://opencode.ai/auth plus model/inference endpoints, but do
 not document an account quota endpoint. ``opencode stats`` is documented

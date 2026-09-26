@@ -90,6 +90,11 @@ you reference. No browser automation or login prompts run in the add-on
 container — obtain each credential outside (web login, `muse login`, or
 browser devtools) and paste the value into the secrets file:
 
+- **Grok (xAI)**: tracks API spend and request count via the management API.
+  Requires a management API key (different from inference keys) and your
+  team ID. Configure in the web console at `https://console.x.ai`, create
+  a management key with billing read access, and store it as
+  `XAI_MANAGEMENT_KEY`. Set `team_id` in the provider options.
 - **OpenCode Go** (config-only): no quota endpoint is documented or
   polled — subscription usage lives in the official web console at
   `https://opencode.ai/auth`. Set `mode: local_stats`; the credential
@@ -112,6 +117,12 @@ browser devtools) and paste the value into the secrets file:
 
 ```yaml
 accounts:
+  - provider: grok
+    account_id: main
+    display_name: Grok (xAI) Main
+    credential_env: XAI_MANAGEMENT_KEY
+    options:
+      team_id: team_abc123
   - provider: opencode_go
     account_id: main
     display_name: OpenCode Go Main
