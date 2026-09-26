@@ -1,226 +1,559 @@
-# AI Usage Dashboard (Home Assistant add-on)
+# AI Usage Dashboard
 
-Production deployment of the AI usage collector: a local collector polls AI
-provider accounts and publishes Home Assistant MQTT discovery sensors plus
-retained state. Architecture: **local collector -> MQTT discovery ->
-Home Assistant dashboard.**
+Home Assistant add-on that tracks AI provider usage, costs, and review metrics across multiple services. Polls provider APIs on a configurable interval and publishes MQTT discovery sensors for real-time dashboarding.
 
-## Prerequisites
+## Overview
 
-1. **Mosquitto broker add-on** (Settings > Add-ons > Mosquitto broker):
-   install, create a broker user, and start it.
-2. **MQTT integration** (Settings > Devices & services > Add integration >
-   MQTT) pointing at the broker. The collector defaults to the internal
-   broker hostname `core-mosquitto`, so no `homeassistant.local` setup is
-   needed.
+This add-on collects usage data from AI coding assistants and services, normalizes it into a consistent metric format, and exposes it as Home Assistant sensors via MQTT discovery. Each provider account becomes a set of sensors tracking costs, token usage, review metrics, and account status.
 
-## Install (local add-on)
+**Key features:**
+- Multi-provider support with provider-specific API integrations
+- Secure credential management via secrets file (never stored in config)
+- Automatic MQTT discovery - sensors appear immediately in Home Assistant
+- State persistence across restarts
+- Redacted error reporting (secrets never appear in logs or sensor data)
+- Configurable polling interval (60-86400 seconds)
 
-1. Copy this folder (`ai-usage-dashboard`) into the Supervisor `addons/`
-   share on the Home Assistant host (via Samba, SSH, or the File editor),
-   so it lands at `/addons/ai-usage-dashboard/`.
-2. Go to Settings > Add-ons > Add-on Store, reload, and open
-   **AI Usage Dashboard** under Local add-ons.
-3. Install, then open the **Configuration** tab.
+## Supported Providers
 
-(Repository alternative: to publish these as a shareable add-on store,
-place this folder at the root of a git repository so the Supervisor can
-discover its `config.yaml`, and add that repository URL under Settings >
-Add-ons > Add-on Store > Repositories.)
+### OpenAI
+**What it tracks:** Organization-level usage and subscription data
+- Monthly spend (USD)
+- Usage metrics from `/v1/organization/usage` endpoint
+- Subscription tier and limits from `/v1/organization/subscription`
 
-## Credentials (HA-safe, no raw secrets in config)
+**API endpoints:**
+- `https://api.openai.com/v1/organization/usage` (usage data)
+- `https://api.openai.com/v1/organization/subscription` (subscription info)
 
-The add-on config holds only credential **names**. Secrets live in a
-user-editable env file inside the add-on's own persistent config directory
-(the `addon_config` mount; nothing else from Home Assistant is mapped):
+**Authentication:** Bearer token (API key with organization read access)
 
-1. Copy `secrets.env.example` to `secrets.env` inside the add-on config
-   directory on the host: `addon_configs/ai_usage_dashboard/secrets.env`
-   (via the File editor, Samba, or SSH add-on; owner-only permissions).
-   Inside the container this file is mounted at `/config/secrets.env`,
-   which is also the `secrets_file` default in the Configuration tab.
-2. Fill in the values. Only the variables you reference are used.
-3. In the Configuration tab, each account sets `credential_env` to the
-   variable name, e.g. `OPENAI_API_KEY_PRIMARY`.
-4. MQTT broker credentials work the same way: set `mqtt_username` and keep
-   `mqtt_password_env: MQTT_PASSWORD` (or your own variable name) with the
-   password in the secrets file.
+**Metrics created:**
+- `monthly_spend_usd` - Current month spend in USD
+- `usage_requests` - Number of API requests
+- `usage_tokens` - Total tokens consumed
+- `subscription_tier` - Current subscription level
+- `subscription_limit` - Usage limit for current tier
 
-Do not use `/data/...` for secrets: `/data` is the container-private
-runtime area (generated config, state) and is not reachable from the
-File editor / Samba. Keep raw values out of the Configuration tab.
+### Anthropic
+**What it tracks:** API usage and billing data
+- Monthly spend (USD)
+- Token usage (input/output tokens)
+- Request counts
 
-macOS keychain is **not** used by the add-on. Raw secret values never
-appear in logs, state topics, or discovery payloads; validation errors name
-only the missing variable.
+**API endpoints:**
+- `https://api.anthropic.com/v1/usage` (usage data)
+- `https://api.anthropic.com/v1/billing` (billing data)
 
-## Minimal configuration example
+**Authentication:** Bearer token (API key)
+
+**Metrics created:**
+- `monthly_spend_usd` - Current month spend in USD
+- `input_tokens` - Input tokens consumed
+- `output_tokens` - Output tokens consumed
+- `total_requests` - Total API requests
+
+### Grok (xAI)
+**What it tracks:** Team-level API usage and costs
+- Monthly spend (USD)
+- Token usage
+- Request counts per team
+
+**API endpoints:**
+- `https://api.x.ai/v1/billing/teams/{team_id}/usage` (team usage)
+
+**Authentication:** Bearer token (management API key)
+
+**Configuration:** Requires `team_id` in options
+
+**Metrics created:**
+- `monthly_spend_usd` - Current month spend in USD
+- `input_tokens` - Input tokens consumed
+- `output_tokens` - Output tokens consumed
+- `total_requests` - Total API requests
+
+### OpenRouter
+**What it tracks:** Account-level credits and usage across all models
+- Total credits purchased (USD)
+- Credits used (USD)
+- Credits remaining (USD)
+
+**API endpoints:**
+- `https://openrouter.ai/api/v1/credits` (account credits)
+
+**Authentication:** Bearer token (management API key)
+
+**Metrics created:**
+- `credits_purchased_usd` - Total credits purchased
+- `credits_used_usd` - Credits consumed
+- `credits_remaining_usd` - Remaining credit balance
+
+### Gemini (Google)
+**What it tracks:** Current-month Gemini-related spend from Google Cloud Billing
+- Monthly spend (USD or CNY, based on billing currency)
+- Billing row count
+
+**Data source:** Google Cloud BigQuery billing export (not direct API)
+
+**Authentication:** OAuth2 JWT with service account credentials
+- Requires BigQuery Job User and BigQuery Data Viewer roles
+- Service account JSON key stored in secrets file
+
+**Configuration:** Requires `project_id` and `billing_export_table` in options
+
+**Metrics created:**
+- `monthly_cost` - Current month spend in billing currency
+- `billing_rows` - Number of billing records
+
+**Implementation notes:**
+- Uses BigQuery export because Google Cloud Billing REST API only exposes catalog/pricing data, not accrued spend
+- Query filters for Gemini, Generative Language, and Vertex AI services
+- Supports USD and CNY currencies; other currencies return UNSUPPORTED status
+- Empty billing data returns zero-cost metrics (not UNSUPPORTED)
+- Mixed-currency results return ERROR status
+
+### CodeRabbit
+**What it tracks:** Code review metrics and activity
+- Total reviews
+- Average complexity score
+- Estimated review time (seconds)
+- Comments posted
+- Comments accepted
+
+**API endpoints:**
+- `https://api.coderabbit.ai/v1/metrics` (review metrics)
+
+**Authentication:** `x-coderabbitai-api-key` header (API key)
+
+**Configuration:** Requires `organization_id` or `org_id` in options
+
+**Metrics created:**
+- `total_reviews` - Number of code reviews
+- `average_complexity` - Mean complexity score
+- `estimated_review_seconds` - Estimated review time
+- `comments_posted` - Total comments posted
+- `comments_accepted` - Comments accepted by users
+
+**Implementation notes:**
+- Supports pagination (up to 100 pages)
+- Validates date ranges and cursor consistency
+- Repeated cursors return ERROR status
+- Window metadata includes start/end dates
+
+### Kimi (Moonshot AI)
+**What it tracks:** API usage and costs
+- Monthly spend (CNY)
+- Token usage
+- Request counts
+
+**API endpoints:**
+- `https://api.moonshot.cn/v1/usage` (usage data)
+
+**Authentication:** Bearer token (API key)
+
+**Metrics created:**
+- `monthly_spend_cny` - Current month spend in CNY
+- `input_tokens` - Input tokens consumed
+- `output_tokens` - Output tokens consumed
+- `total_requests` - Total API requests
+
+### DeepSeek
+**What it tracks:** API usage and costs
+- Monthly spend (CNY)
+- Token usage
+- Request counts
+
+**API endpoints:**
+- `https://api.deepseek.com/v1/usage` (usage data)
+
+**Authentication:** Bearer token (API key)
+
+**Metrics created:**
+- `monthly_spend_cny` - Current month spend in CNY
+- `input_tokens` - Input tokens consumed
+- `output_tokens` - Output tokens consumed
+- `total_requests` - Total API requests
+
+### OpenCode Go
+**What it tracks:** Local session statistics only (no API polling)
+- Local token usage
+- Local cost estimates
+
+**Data source:** Local `opencode stats` command output
+
+**Authentication:** Token reference only (no API calls)
+
+**Configuration:** Requires `mode: local_stats` in options
+
+**Metrics created:**
+- `local_tokens` - Tokens used in local sessions
+- `local_cost_usd` - Estimated local session cost
+
+**Implementation notes:**
+- No public API for subscription quota
+- Tracks local session data only
+- Subscription management must be done via web console
+
+### Muse Code
+**What it tracks:** Configuration reference only (no API polling)
+- Account registration reference
+
+**Data source:** None (config-only)
+
+**Authentication:** Token reference only (no API calls)
+
+**Metrics created:** None
+
+**Implementation notes:**
+- No public API for subscription quota
+- Provider exists only to track account configuration
+- Subscription management must be done via web console
+
+### Alibaba Coding Plan
+**What it tracks:** Coding plan subscription quota via CLI
+- Remaining quota
+- Usage statistics
+
+**Data source:** `bl usage coding-plan` CLI command
+
+**Authentication:** Cookie-based (stored in secrets file)
+
+**Configuration:** Requires `opt_in: true`, `cli_path`, and `timeout` in options
+
+**Metrics created:**
+- `remaining_quota` - Remaining usage quota
+- `usage_percentage` - Percentage of quota used
+
+**Implementation notes:**
+- Requires `bl` CLI to be installed and available in container
+- CLI must be mounted or bundled in custom image
+- Without CLI, returns UNSUPPORTED status
+- Alibaba may prohibit automated access to Coding Plan keys
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Home Assistant Add-on Container                            │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │  AI Usage Dashboard Collector                         │  │
+│  │  - Polls provider APIs on interval                    │  │
+│  │  - Normalizes metrics                                 │  │
+│  │  - Publishes to MQTT                                  │  │
+│  └───────────────────────────────────────────────────────┘  │
+│                          │                                   │
+│                          ▼                                   │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │  MQTT Client (paho-mqtt)                              │  │
+│  │  - Connects to Mosquitto broker                       │  │
+│  │  - Publishes discovery messages                       │  │
+│  │  - Publishes state updates                            │  │
+│  └───────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│  Mosquitto MQTT Broker (Home Assistant Add-on)              │
+│  - Receives discovery messages                              │
+│  - Receives state updates                                   │
+└─────────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│  Home Assistant                                             │
+│  - MQTT Integration discovers sensors                       │
+│  - Sensors appear in UI                                     │
+│  - Dashboard displays metrics                               │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Sensor Naming Convention
+
+All sensors follow the pattern: `sensor.aiud_<provider>_<account_id>_<metric>`
+
+**Examples:**
+- `sensor.aiud_openai_primary_monthly_spend_usd`
+- `sensor.aiud_anthropic_work_input_tokens`
+- `sensor.aiud_coderabbit_main_total_reviews`
+
+**Diagnostic sensors:**
+- `sensor.aiud_<provider>_<account_id>_status` - Account status (fresh/stale/auth_error/unsupported/error)
+- `sensor.aiud_<provider>_<account_id>_reason` - Human-readable status reason
+
+## Status Values
+
+- **fresh** - Data retrieved successfully in current poll cycle
+- **stale** - Transient failure; showing last valid values
+- **auth_error** - Credential missing, invalid, or lacks required permissions
+- **unsupported** - No documented API for this metric, or provider requires additional setup
+- **error** - Non-transient failure (malformed response, configuration error)
+
+## Security Model
+
+### Credential Storage
+- Credentials stored in `/config/secrets.env` (mapped from `addon_configs/ai_usage_dashboard/secrets.env`)
+- Configuration references only variable names, never values
+- Secrets file permissions: 0600 (owner read/write only)
+- Raw secrets never appear in:
+  - Configuration files
+  - Logs
+  - MQTT messages
+  - Sensor attributes
+  - Error messages
+
+### Credential Resolution
+1. Add-on reads `credential_env` from configuration
+2. Looks up variable name in secrets file
+3. Passes value to provider adapter
+4. Adapter uses value for API authentication
+5. Value is never logged or exposed in sensor data
+
+### Error Handling
+- Validation errors name the missing variable, never its value
+- HTTP errors redact authorization headers
+- JSON parsing errors do not expose credential content
+- All error messages are safe to display in UI
+
+## Configuration Reference
+
+### Global Options
 
 ```yaml
-mqtt_username: hass
-mqtt_password_env: MQTT_PASSWORD
-poll_interval: 900
-accounts:
-  - provider: openai
-    account_id: primary
-    display_name: OpenAI Primary
-    credential_env: OPENAI_API_KEY_PRIMARY
-    options:
-      usage_url: https://api.openai.com/v1/organization/usage/completions
-  - provider: openai
-    account_id: secondary
-    display_name: OpenAI Secondary
-    credential_env: OPENAI_API_KEY_SECONDARY
+mqtt_host: "core-mosquitto"  # MQTT broker hostname
+mqtt_port: 1883              # MQTT broker port
+mqtt_username: ""            # MQTT username (optional)
+mqtt_password_env: "MQTT_PASSWORD"  # Env var name for MQTT password
+secrets_file: "/config/secrets.env"  # Path to secrets file
+poll_interval: 900           # Polling interval in seconds (60-86400)
+discovery_prefix: "homeassistant"  # MQTT discovery prefix
+data_dir: "/data"            # Runtime data directory
 ```
 
-A third OpenAI account is configuration-only: append another entry with a
-new `account_id` (e.g. `tertiary`) and its own `credential_env`. No code
-changes, and entity IDs stay distinct and stable
-(`sensor.aiud_openai_tertiary_*`). The same holds for the other providers:
-each `accounts:` entry sets `provider` to one of `openai`, `anthropic`,
-`kimi`, `deepseek`, `opencode_go`, `muse_code`, `alibaba_coding_plan`, `grok`,
-`openrouter`, `gemini`, or `coderabbit`, an `account_id`, and a
-`credential_env` naming a variable in `secrets.env`, plus provider `options`.
+### Account Configuration
 
-## Credentials per provider (names in Configuration, values in secrets.env)
+Each account requires:
+- `provider` - Provider name (openai, anthropic, etc.)
+- `account_id` - Unique identifier for this account
+- `display_name` - Human-readable name (optional)
+- `credential_env` - Environment variable name in secrets file
+- `options` - Provider-specific configuration (JSON object)
 
-Copy `secrets.env.example` to `secrets.env` and fill in only the variables
-you reference. No browser automation or login prompts run in the add-on
-container — obtain each credential outside (web login, `muse login`, or
-browser devtools) and paste the value into the secrets file:
+### Provider-Specific Options
 
-- **Grok (xAI)**: tracks API spend and request count via the management API.
-  Requires a management API key (different from inference keys) and your
-  team ID. Configure in the web console at `https://console.x.ai`, create
-  a management key with billing read access, and store it as
-  `XAI_MANAGEMENT_KEY`. Set `team_id` in the provider options.
-- **OpenRouter**: tracks account-level purchased credits, usage, and remaining
-  balance in USD. Create a management key at
-  `https://openrouter.ai/settings/keys`, store it as `OPENROUTER_API_KEY`,
-  and set `options: {mode: credits}`. The provider uses
-  `https://openrouter.ai/api/v1/credits`; generation IDs are not account usage.
-- **Gemini (Google)**: tracks real current-month Gemini-related spend from a
-  Google Cloud Billing export in BigQuery. Enable the export, give the service
-  account BigQuery Job User and Data Viewer roles, store its JSON as
-  `GEMINI_SERVICE_ACCOUNT_KEY`, and set `project_id` plus
-  `billing_export_table: project.dataset.table`. The add-on performs OAuth2
-  JWT authentication automatically.
-- **CodeRabbit**: tracks review metrics (total reviews, complexity scores,
-  review times, comments). Get an API key from
-  `https://coderabbit.ai/settings/api` and store it as `CODERABBIT_API_KEY`.
-  Set `organization_id` in options or use `account_id`.
-- **OpenCode Go** (config-only): no quota endpoint is documented or
-  polled — subscription usage lives in the official web console at
-  `https://opencode.ai/auth`. Set `mode: local_stats`; the credential
-  reference (e.g. `OPENCODE_GO_TOKEN`) only preserves the account
-  registration. `opencode stats` reports local token/cost statistics
-  (`local_session_usage`), never remaining subscription quota.
-- **Alibaba Coding Plan** (explicitly opt-in CLI mode): make the official
-  `bl` CLI available to the container (see "Provider CLIs" below), store
-  the credential → e.g. `ALIBABA_CODING_PLAN_COOKIE`, and set
-  `opt_in: true`, `cli_path: bl` (or the executable path), `timeout: 30`.
-  The collector runs `bl usage coding-plan` and parses only the tested
-  text shape. Warning: Alibaba intends Coding Plan keys for interactive
-  coding tools and may prohibit automated scripts/backends — opt in only
-  if that use is allowed for your plan.
-- **Muse Code** (config-only): no subscription remaining-quota endpoint is
-  documented or polled. The credential reference (e.g. `MUSE_CODE_TOKEN`)
-  only preserves the account registration; a `META_API_KEY` value is
-  pay-as-you-go API access, not proof of subscription quota. Manage the
-  subscription in the official Meta/Muse web console.
-
+**OpenAI:**
 ```yaml
-accounts:
-  - provider: grok
-    account_id: main
-    display_name: Grok (xAI) Main
-    credential_env: XAI_MANAGEMENT_KEY
-    options:
-      team_id: team_abc123
-  - provider: opencode_go
-    account_id: main
-    display_name: OpenCode Go Main
-    credential_env: OPENCODE_GO_TOKEN
-    options:
-      mode: local_stats
-  - provider: muse_code
-    account_id: main
-    display_name: Muse Code Main
-    credential_env: MUSE_CODE_TOKEN
-  - provider: alibaba_coding_plan
-    account_id: main
-    display_name: Alibaba Coding Plan Main
-    credential_env: ALIBABA_CODING_PLAN_COOKIE
-    options:
-      opt_in: true
-      cli_path: bl
-      timeout: 30
+options:
+  usage_url: "https://api.openai.com/v1/organization/usage"
+  subscription_url: "https://api.openai.com/v1/organization/subscription"
 ```
 
-## Provider CLIs (Alibaba `bl`; reserved `opencode`/`muse` paths)
-
-The default image does **not** bundle the `bl`, `opencode`, or `muse`
-CLIs, and the collector never pretends otherwise: an Alibaba account
-whose CLI is absent reports a clean `unsupported` status naming the
-missing executable. To enable Alibaba polling, either mount the official
-`bl` executable into the container and set `cli_path` to its path, or
-extend the image with a pinned/bundled copy of the CLI:
-
-```dockerfile
-# Example only — pin a verified release in your own fork:
-# COPY --from=<your-pinned-bl-image> /usr/local/bin/bl /usr/local/bin/bl
+**Grok:**
+```yaml
+options:
+  team_id: "team_abc123"
 ```
 
-Credentials for the CLI come only from the secrets file via
-`credential_env` (exposed solely inside the child process environment,
-scrubbed from all output). No console RPC, inference-quota, or
-undocumented endpoint is ever used.
+**OpenRouter:**
+```yaml
+options:
+  credits_url: "https://openrouter.ai/api/v1/credits"
+```
 
-## Dashboard
+**Gemini:**
+```yaml
+options:
+  project_id: "my-project-id"
+  billing_export_table: "my-project.billing_dataset.gcp_billing_export_v1_XXXXXX"
+  currency: "USD"  # Optional, defaults to USD
+```
 
-Interactive account management stays in each provider's own web console
-(OpenCode dashboard, Alibaba Model Studio / Bailian console, Meta AI
-account pages) — the add-on only reads quota snapshots. Import
-`dashboard/lovelace.yaml` from the project repo via Settings >
-Dashboards as below.
+**CodeRabbit:**
+```yaml
+options:
+  organization_id: "org_123"  # or org_id
+  days: 30  # Lookback window
+  limit: 1000  # Results per page
+  start_date: "2026-01-01"  # Optional, overrides days
+  end_date: "2026-01-31"  # Optional, defaults to today
+```
 
-## Dashboard
+**OpenCode Go:**
+```yaml
+options:
+  mode: "local_stats"
+```
 
-Import `dashboard/lovelace.yaml` from the project repo via Settings >
-Dashboards. Sensors appear as `sensor.aiud_<provider>_<account>_<metric>`
-plus `_status` / `_reason` diagnostics and per-account availability.
+**Alibaba Coding Plan:**
+```yaml
+options:
+  opt_in: true
+  cli_path: "/usr/local/bin/bl"
+  timeout: 30
+```
 
-## Persistence and polling
+## State Persistence
 
-- State (last valid values) lives at `/data/state.json` and survives
-  add-on restarts and rebuilds.
-- `poll_interval` (60-86400 s, default 900) controls the loop.
-- The entrypoint traps SIGTERM/SIGINT for graceful Supervisor stops.
+- State stored in `/data/state.json`
+- Survives add-on restarts and rebuilds
+- Preserves last valid metric values
+- Used to provide stale data during transient failures
+- Automatically updated after each successful poll
 
-## What is verified where
+## Polling Behavior
 
-- **Verified offline** (no credentials, no broker): option-to-config
-  conversion, redacted validation, discovery unique-ID stability,
-  secret-leak scans, and fixture dry-runs (`tests/test_addon.py`).
-- **Requires live HA**: broker connectivity, real provider quota values,
-  and the imported dashboard rendering. Without credentials the collector
-  reports `auth_error`/`error` per account and retries next interval.
+- Default interval: 900 seconds (15 minutes)
+- Range: 60-86400 seconds
+- Each provider polled independently
+- Failed polls do not block other providers
+- Transient errors (429, 5xx, timeouts) trigger retry with backoff
+- Last valid values preserved during transient failures
 
 ## Troubleshooting
 
-- Add-on stops immediately with `ERROR: ...`: the message names the bad
-  option or missing variable (never its value). Fix Configuration or
-  `/config/secrets.env` (host: `addon_configs/ai_usage_dashboard/secrets.env`)
-  and restart.
-- Sensors show `auth_error`: the referenced credential is wrong or lacks
-  billing access; check the `_reason` sensor.
-- Sensors show `unsupported`: no documented quota source exists for the
-  account (OpenCode Go and Muse Code are always `unsupported` — check the
-  `_reason` sensor for the official console link; Alibaba without
-  `opt_in: true`, with a missing `bl` CLI, or with CLI output outside the
-  tested text shape). Last valid values are never zeroed.
-- Sensors show `error`: a bad option (removed legacy options such as
-  `usage_url`/`key_url`/`auth_mode`/`mode`/`region`/`api_url`, a bad
-  `cli_path`/`timeout`) or a failing `bl` invocation (timeout, nonzero
-  exit); the `_reason` sensor names the problem without ever showing the
-  secret.
+### Add-on Won't Start
+
+**Symptom:** Add-on stops immediately with `ERROR: ...`
+
+**Cause:** Configuration validation failure
+
+**Solution:**
+1. Check add-on logs for error message
+2. Error names the problematic option or missing variable
+3. Fix configuration or add missing variable to secrets file
+4. Restart add-on
+
+### Sensors Show auth_error
+
+**Symptom:** Sensor status is `auth_error`
+
+**Cause:** Credential missing, invalid, or lacks required permissions
+
+**Solution:**
+1. Check `_reason` sensor for details
+2. Verify variable exists in secrets file
+3. Verify credential has required permissions
+4. For Gemini: verify service account has BigQuery roles
+5. For CodeRabbit: verify API key is valid
+
+### Sensors Show unsupported
+
+**Symptom:** Sensor status is `unsupported`
+
+**Cause:** Provider requires additional setup or has no public API
+
+**Solution:**
+1. Check `_reason` sensor for details
+2. For Alibaba: install `bl` CLI and set `opt_in: true`
+3. For OpenCode Go / Muse Code: no API available, config-only
+4. For Gemini: verify billing export is enabled
+
+### Sensors Show error
+
+**Symptom:** Sensor status is `error`
+
+**Cause:** Non-transient failure (malformed response, configuration error)
+
+**Solution:**
+1. Check `_reason` sensor for details
+2. Verify provider options are correct
+3. For Gemini: verify project_id and billing_export_table format
+4. For CodeRabbit: verify date format (YYYY-MM-DD)
+
+### No Sensors Appear
+
+**Symptom:** Add-on running but no sensors in Home Assistant
+
+**Cause:** MQTT discovery not working
+
+**Solution:**
+1. Verify Mosquitto broker is running
+2. Verify MQTT integration is configured
+3. Check add-on logs for MQTT connection errors
+4. Verify `discovery_prefix` matches MQTT integration setting
+5. Restart MQTT integration
+
+### Stale Data
+
+**Symptom:** Sensors show old data
+
+**Cause:** Polling failures or interval too long
+
+**Solution:**
+1. Check `_status` sensor (should be `fresh`)
+2. Check `_reason` sensor for error details
+3. Reduce `poll_interval` if too long
+4. Check network connectivity to provider APIs
+
+## Development
+
+### Repository Structure
+
+```
+ai-usage-dashboard/
+├── config.yaml              # Add-on configuration
+├── Dockerfile               # Container build instructions
+├── README.md                # This file
+├── run.sh                   # Container entrypoint
+├── translations/
+│   └── en.yaml             # UI translations
+└── rootfs/
+    └── app/
+        └── ai_usage_dashboard/
+            ├── __init__.py
+            ├── addon_options.py    # Configuration validation
+            ├── collector.py        # Main collection loop
+            ├── credentials.py      # Credential resolution
+            ├── discovery.py        # MQTT discovery
+            ├── http_client.py      # HTTP client with retry
+            ├── models.py           # Data models
+            └── providers/          # Provider adapters
+                ├── __init__.py
+                ├── base.py
+                ├── _helpers.py
+                ├── openai.py
+                ├── anthropic.py
+                ├── grok.py
+                ├── openrouter.py
+                ├── gemini.py
+                ├── coderabbit.py
+                ├── kimi.py
+                ├── deepseek.py
+                ├── opencode_go.py
+                ├── muse_code.py
+                └── alibaba_coding_plan.py
+```
+
+### Adding a New Provider
+
+1. Create provider adapter in `providers/<name>.py`
+2. Implement `Adapter` class with `collect()` method
+3. Return `AccountSnapshot` with metrics
+4. Register provider in `providers/__init__.py`
+5. Add to `SUPPORTED_PROVIDERS` in `config.py`
+6. Update `translations/en.yaml` with setup instructions
+7. Update this README with provider documentation
+
+### Testing
+
+```bash
+# Run tests
+pytest ai-usage-dashboard/tests/
+
+# Run CodeRabbit review
+coderabbit review --uncommitted --include-untracked --agent
+
+# Compile check
+python3 -m compileall ai-usage-dashboard/rootfs/app
+```
+
+## License
+
+This project is provided as-is for use with Home Assistant.
+
+## Support
+
+For issues, feature requests, or questions:
+1. Check troubleshooting section above
+2. Review add-on logs
+3. Check `_status` and `_reason` sensors
+4. Open an issue on GitHub
