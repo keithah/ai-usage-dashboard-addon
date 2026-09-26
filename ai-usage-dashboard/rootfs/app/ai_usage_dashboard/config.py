@@ -18,6 +18,9 @@ SUPPORTED_PROVIDERS = (
     "muse_code",
     "alibaba_coding_plan",
     "grok",
+    "openrouter",
+    "gemini",
+    "coderabbit",
 )
 
 

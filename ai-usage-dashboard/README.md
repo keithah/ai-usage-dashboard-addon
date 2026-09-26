@@ -95,6 +95,20 @@ browser devtools) and paste the value into the secrets file:
   team ID. Configure in the web console at `https://console.x.ai`, create
   a management key with billing read access, and store it as
   `XAI_MANAGEMENT_KEY`. Set `team_id` in the provider options.
+- **OpenRouter**: tracks per-generation token usage and cost. Get an API key
+  from `https://openrouter.ai/keys` and store it as `OPENROUTER_API_KEY`.
+  Set `generation_id` in options to track a specific generation, or use
+  `account_id` as the generation ID.
+- **Gemini (Google)**: tracks billing data via Google Cloud Billing API.
+  Requires a Google Cloud project with billing enabled. Create a service
+  account with billing read permissions, download the JSON key, and store
+  the JSON content as `GEMINI_BILLING_KEY`. Set `project_id` and
+  `billing_account_id` in options. Note: requires google-auth library for
+  production use.
+- **CodeRabbit**: tracks review metrics (total reviews, complexity scores,
+  review times, comments). Get an API key from
+  `https://coderabbit.ai/settings/api` and store it as `CODERABBIT_API_KEY`.
+  Set `organization_id` in options or use `account_id`.
 - **OpenCode Go** (config-only): no quota endpoint is documented or
   polled — subscription usage lives in the official web console at
   `https://opencode.ai/auth`. Set `mode: local_stats`; the credential
