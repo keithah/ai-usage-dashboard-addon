@@ -79,21 +79,24 @@ class Metric:
 
 @dataclass(frozen=True)
 class CredentialRef:
-    """A reference to a secret; never a raw secret value."""
+    """A reference to a secret or a direct secret value."""
 
     env: str | None = None
+    value: str | None = None
     keychain_service: str | None = None
     keychain_account: str | None = None
 
     def describe(self) -> str:
         if self.env:
             return f"env:{self.env}"
+        if self.value:
+            return "value:***"
         if self.keychain_service:
             return f"keychain:{self.keychain_service}/{self.keychain_account or ''}"
         return "missing"
 
     def is_empty(self) -> bool:
-        return not self.env and not self.keychain_service
+        return not self.env and not self.value and not self.keychain_service
 
 
 @dataclass(frozen=True)

@@ -42,5 +42,6 @@ schema:
     - provider: str
       account_id: str
       display_name: str?
-      credential_env: str
+      credential_env: str?
+      credential_value: str?
       options: str?

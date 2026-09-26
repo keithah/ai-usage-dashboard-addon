@@ -221,22 +221,46 @@ def options_to_runtime(
         if key in seen:
             raise AddonOptionsError(f"{where}: duplicate account {key!r}")
         seen.add(key)
-        cred_name = _require_env_name(
-            raw.get("credential_env"), f"{where} 'credential_env'"
-        )
-        if not env.get(cred_name, ""):
+        
+        # Support both credential_env (env var name) and credential_value (direct value)
+        cred_env = raw.get("credential_env")
+        cred_value = raw.get("credential_value")
+        
+        if cred_env and cred_value:
             raise AddonOptionsError(
-                f"{where}: env var {cred_name!r} is unset or empty; "
-                f"add '{cred_name}=<value>' to the secrets file "
-                f"({options.get('secrets_file') or DEFAULT_SECRETS_FILE}) "
-                "or export it in the add-on environment"
+                f"{where}: cannot specify both 'credential_env' and 'credential_value'; "
+                "use one or the other"
             )
+        
+        if not cred_env and not cred_value:
+            raise AddonOptionsError(
+                f"{where}: either 'credential_env' or 'credential_value' is required"
+            )
+        
+        if cred_env:
+            cred_name = _require_env_name(cred_env, f"{where} 'credential_env'")
+            if not env.get(cred_name, ""):
+                raise AddonOptionsError(
+                    f"{where}: env var {cred_name!r} is unset or empty; "
+                    f"add '{cred_name}=<value>' to the secrets file "
+                    f"({options.get('secrets_file') or DEFAULT_SECRETS_FILE}) "
+                    "or export it in the add-on environment"
+                )
+            credential_ref = CredentialRef(env=cred_name)
+        else:
+            # credential_value is provided directly
+            if not isinstance(cred_value, str) or not cred_value.strip():
+                raise AddonOptionsError(
+                    f"{where}: 'credential_value' must be a non-empty string"
+                )
+            credential_ref = CredentialRef(value=cred_value.strip())
+        
         accounts.append(
             AccountConfig(
                 provider=provider,
                 account_id=account_id,
                 display_name=display_name,
-                credential=CredentialRef(env=cred_name),
+                credential=credential_ref,
                 options=_account_options(raw.get("options"), where),
             )
         )

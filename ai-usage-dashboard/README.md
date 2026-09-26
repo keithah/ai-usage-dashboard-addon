@@ -8,7 +8,7 @@ This add-on collects usage data from AI coding assistants and services, normaliz
 
 **Key features:**
 - Multi-provider support with provider-specific API integrations
-- Secure credential management via secrets file (never stored in config)
+- Flexible credential management (secrets file OR direct GUI input)
 - Automatic MQTT discovery - sensors appear immediately in Home Assistant
 - State persistence across restarts
 - Redacted error reporting (secrets never appear in logs or sensor data)
@@ -291,8 +291,12 @@ All sensors follow the pattern: `sensor.aiud_<provider>_<account_id>_<metric>`
 ## Security Model
 
 ### Credential Storage
+
+Credentials can be provided in two ways:
+
+**Method 1: Secrets File (Recommended for production)**
 - Credentials stored in `/config/secrets.env` (mapped from `addon_configs/ai_usage_dashboard/secrets.env`)
-- Configuration references only variable names, never values
+- Configuration references only variable names via `credential_env`, never values
 - Secrets file permissions: 0600 (owner read/write only)
 - Raw secrets never appear in:
   - Configuration files
@@ -301,12 +305,16 @@ All sensors follow the pattern: `sensor.aiud_<provider>_<account_id>_<metric>`
   - Sensor attributes
   - Error messages
 
-### Credential Resolution
-1. Add-on reads `credential_env` from configuration
-2. Looks up variable name in secrets file
-3. Passes value to provider adapter
-4. Adapter uses value for API authentication
-5. Value is never logged or exposed in sensor data
+**Method 2: Direct GUI Input (Convenient for testing)**
+- Credentials entered directly in Home Assistant Configuration tab via `credential_value`
+- Stored in `/data/options.json` (Home Assistant's add-on configuration)
+- Less secure than secrets file but easier to configure
+- Suitable for development, testing, or single-user setups
+
+**Credential Resolution Order:**
+1. Environment variable (if `credential_env` is set)
+2. Direct value (if `credential_value` is set)
+3. Keychain (if configured)
 
 ### Error Handling
 - Validation errors name the missing variable, never its value
@@ -335,8 +343,31 @@ Each account requires:
 - `provider` - Provider name (openai, anthropic, etc.)
 - `account_id` - Unique identifier for this account
 - `display_name` - Human-readable name (optional)
-- `credential_env` - Environment variable name in secrets file
+- `credential_env` OR `credential_value` - Credential source (see below)
 - `options` - Provider-specific configuration (JSON object)
+
+**Credential Configuration (choose one):**
+
+**Option A: Secrets File (Recommended)**
+```yaml
+credential_env: OPENAI_API_KEY  # Variable name in secrets.env
+```
+
+**Option B: Direct GUI Input**
+```yaml
+credential_value: sk-...  # Actual credential value (stored in options.json)
+```
+
+**Example Account Configuration:**
+```yaml
+accounts:
+  - provider: openai
+    account_id: primary
+    display_name: OpenAI Primary
+    credential_env: OPENAI_API_KEY  # or credential_value: sk-...
+    options:
+      usage_url: "https://api.openai.com/v1/organization/usage"
+```
 
 ### Provider-Specific Options
 
