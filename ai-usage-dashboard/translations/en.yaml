@@ -1,0 +1,75 @@
+configuration:
+  mqtt_host:
+    name: MQTT broker host
+    description: Leave blank to use the Home Assistant Mosquitto broker (core-mosquitto).
+  mqtt_port:
+    name: MQTT broker port
+  mqtt_username:
+    name: MQTT username
+    description: Optional broker username. Store the password in secrets.env and reference it with mqtt_password_env.
+  mqtt_password_env:
+    name: MQTT password environment variable
+    description: Name of the variable in /config/secrets.env containing the broker password.
+  secrets_file:
+    name: Secrets file
+    description: Fixed default is /config/secrets.env. Keep raw API keys and service-account JSON only in this file.
+  poll_interval:
+    name: Poll interval (seconds)
+    description: How often providers are queried. Allowed range is 60 to 86400 seconds.
+  discovery_prefix:
+    name: MQTT discovery prefix
+  data_dir:
+    name: Runtime data directory
+    description: Leave as /data.
+  accounts:
+    name: Provider accounts
+    description: >-
+      Add one account object per provider. credential_env is the variable name
+      in /config/secrets.env, never the raw credential. options is a JSON object.
+      Setup guides are below.
+
+      OpenAI: create an API key at https://platform.openai.com/api-keys and use
+      credential_env OPENAI_API_KEY. Anthropic: create a key at
+      https://console.anthropic.com/settings/keys and use ANTHROPIC_API_KEY.
+
+      Grok: create an xAI management key with billing access at
+      https://console.x.ai and use XAI_MANAGEMENT_KEY; options JSON is
+      {"team_id":"your_team_id"}.
+
+      OpenRouter: create a management key at
+      https://openrouter.ai/settings/keys and use OPENROUTER_API_KEY; options
+      JSON is {"mode":"credits"}. This reports purchased, used, and remaining
+      USD credits from the account endpoint.
+
+      Gemini: enable Cloud Billing export to BigQuery, create a service account
+      with BigQuery Job User and BigQuery Data Viewer, and store its JSON key as
+      GEMINI_SERVICE_ACCOUNT_KEY. Set options JSON to
+      {"project_id":"billing_query_project","billing_export_table":"project.dataset.table"}.
+      This reports real current-month Gemini-related cost from the export.
+
+      CodeRabbit: create an API key at https://coderabbit.ai/settings/api and
+      use CODERABBIT_API_KEY; options JSON is {"organization_id":"your_org_id"}
+      or {"org_id":"your_org_id"}. org_id takes precedence when both are set.
+
+      Alibaba Coding Plan: install the official bl CLI, use
+      ALIBABA_CODING_PLAN_COOKIE, and set options JSON to
+      {"opt_in":true,"cli_path":"bl","timeout":30}.
+
+      OpenCode Go and Muse Code currently expose local/configuration data only;
+      their subscription quota APIs are not public. Kimi and DeepSeek require
+      their normal API keys and do not need provider-specific options.
+  accounts.provider:
+    name: Provider
+    description: "Select a supported provider: openai, anthropic, kimi, deepseek, opencode_go, muse_code, alibaba_coding_plan, grok, openrouter, gemini, or coderabbit."
+  accounts.account_id:
+    name: Account ID
+    description: Stable unique ID such as primary or work.
+  accounts.display_name:
+    name: Display name
+    description: Optional friendly name shown in Home Assistant sensors.
+  accounts.credential_env:
+    name: Credential environment variable
+    description: Name only, for example OPENROUTER_API_KEY. Do not paste the secret here.
+  accounts.options:
+    name: Provider options (JSON)
+    description: Use the provider-specific JSON setup shown in the Provider accounts instructions.

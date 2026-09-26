@@ -1,9 +1,11 @@
 """Safe HTTP client: timeouts, bounded retries/backoff, redacted errors."""
 from __future__ import annotations
 
+import inspect
 import json
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 
@@ -47,14 +49,40 @@ class HttpResponse:
         return None
 
 
+_SENSITIVE_HEADERS = frozenset({"authorization", "x-api-key", "api-key", "cookie", "x-coderabbitai-api-key"})
+
+
 def _redact_headers(headers: dict) -> dict:
     redacted = {}
     for key, value in headers.items():
-        if key.lower() in ("authorization", "x-api-key", "api-key", "cookie"):
+        if key.lower() in _SENSITIVE_HEADERS:
             redacted[key] = "***"
         else:
             redacted[key] = value
     return redacted
+
+
+def _origin(url: str) -> tuple[str, str | None, int | None]:
+    parsed = urllib.parse.urlsplit(url)
+    default_ports = {"http": 80, "https": 443}
+    port = parsed.port
+    if port is None:
+        port = default_ports.get(parsed.scheme)
+    return parsed.scheme, parsed.hostname, port
+
+
+class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Redirect handler that strips sensitive headers on cross-origin redirects."""
+
+    def __init__(self, original_url: str):
+        self._original_origin = _origin(original_url)
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if _origin(newurl) != self._original_origin:
+            for key in list(req.headers):
+                if key.lower() in _SENSITIVE_HEADERS:
+                    del req.headers[key]
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 @dataclass
@@ -64,16 +92,20 @@ class SafeHttpClient:
     timeout: float = 15.0
     max_retries: int = 2
     backoff_base: float = 1.0
-    handler: object = None  # callable(method, url, headers, timeout) -> HttpResponse
+    handler: object = None  # callable(method, url, headers, timeout[, body]) -> HttpResponse
     sleep: object = field(default=time.sleep, repr=False)
+    _handler_accepts_body: bool | None = field(default=None, init=False, repr=False)
+    _handler_identity: object = field(default=None, init=False, repr=False)
 
     def get(self, url: str, headers: dict | None = None) -> HttpResponse:
         return self.request("GET", url, headers=headers)
 
-    def post(self, url: str, headers: dict | None = None, json: dict | None = None) -> HttpResponse:
-        return self.request("POST", url, headers=headers, json=json)
+    def post(self, url: str, headers: dict | None = None, json: dict | None = None, form: dict | None = None) -> HttpResponse:
+        return self.request("POST", url, headers=headers, json=json, form=form)
 
-    def request(self, method: str, url: str, headers: dict | None = None, json: dict | None = None) -> HttpResponse:
+    def request(self, method: str, url: str, headers: dict | None = None, json: dict | None = None, form: dict | None = None) -> HttpResponse:
+        if json is not None and form is not None:
+            raise ValueError("request accepts either json or form, not both")
         safe_headers = _redact_headers(headers or {})
         request_body = None
         if json is not None:
@@ -82,12 +114,42 @@ class SafeHttpClient:
             if not headers or not any(k.lower() == "content-type" for k in headers):
                 headers = dict(headers or {})
                 headers["Content-Type"] = "application/json"
+        elif form is not None:
+            from urllib.parse import urlencode
+            request_body = urlencode(form).encode("utf-8")
+            if not headers or not any(k.lower() == "content-type" for k in headers):
+                headers = dict(headers or {})
+                headers["Content-Type"] = "application/x-www-form-urlencoded"
+        handler_accepts_body = False
+        if self.handler is not None:
+            if self.handler is not self._handler_identity:
+                self._handler_identity = self.handler
+                self._handler_accepts_body = None
+            if self._handler_accepts_body is None:
+                try:
+                    inspect.signature(self.handler).bind(  # type: ignore[arg-type]
+                        "GET", "", {}, self.timeout, None
+                    )
+                except TypeError:
+                    self._handler_accepts_body = False
+                except ValueError:
+                    # Some callable objects have no inspectable signature; use
+                    # the extended contract and let their own errors propagate.
+                    self._handler_accepts_body = True
+                else:
+                    self._handler_accepts_body = True
+            handler_accepts_body = self._handler_accepts_body
+        if self.handler is not None and request_body is not None and not handler_accepts_body:
+            raise TypeError("HTTP test handler must accept a request body for POST requests")
         attempts = 0
         while True:
             attempts += 1
             try:
                 if self.handler is not None:
-                    resp = self.handler(method, url, headers or {}, self.timeout)  # type: ignore[operator]
+                    if handler_accepts_body:
+                        resp = self.handler(method, url, headers or {}, self.timeout, request_body)  # type: ignore[operator]
+                    else:
+                        resp = self.handler(method, url, headers or {}, self.timeout)  # type: ignore[operator]
                 else:
                     resp = self._perform(method, url, headers or {}, request_body)
             except (TimeoutError, ConnectionError, OSError) as exc:
@@ -138,8 +200,9 @@ class SafeHttpClient:
 
     def _perform(self, method: str, url: str, headers: dict, request_body: bytes | None = None) -> HttpResponse:
         req = urllib.request.Request(url, method=method, headers=dict(headers), data=request_body)
+        opener = urllib.request.build_opener(_SafeRedirectHandler(original_url=url))
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as fh:
+            with opener.open(req, timeout=self.timeout) as fh:
                 status = getattr(fh, "status", 200)
                 raw_headers = dict(fh.headers.items()) if fh.headers else {}
                 payload = fh.read()

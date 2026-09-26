@@ -32,7 +32,10 @@ RUN apk add --no-cache python3 py3-pip
 # Without the CLI the account reports a clean `unsupported` status.
 COPY rootfs/app/ai_usage_dashboard ./ai_usage_dashboard
 
-RUN pip3 install --no-cache-dir --break-system-packages paho-mqtt pyyaml cryptography \
+RUN pip3 install --no-cache-dir --break-system-packages \
+    paho-mqtt==2.1.0 \
+    pyyaml==6.0.2 \
+    cryptography==44.0.0 \
     && python3 -c "import ai_usage_dashboard.addon_options" \
     && rm -rf /root/.cache
 

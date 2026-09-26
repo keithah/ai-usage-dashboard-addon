@@ -78,10 +78,9 @@ new `account_id` (e.g. `tertiary`) and its own `credential_env`. No code
 changes, and entity IDs stay distinct and stable
 (`sensor.aiud_openai_tertiary_*`). The same holds for the other providers:
 each `accounts:` entry sets `provider` to one of `openai`, `anthropic`,
-`kimi`, `deepseek`, `opencode_go`, `muse_code`, `alibaba_coding_plan`, an
-`account_id`, and a `credential_env` naming a variable in `secrets.env`,
-plus provider `options` (`mode: local_stats` for OpenCode Go; no options
-for Muse Code; `opt_in`/`cli_path`/`timeout` for Alibaba Coding Plan).
+`kimi`, `deepseek`, `opencode_go`, `muse_code`, `alibaba_coding_plan`, `grok`,
+`openrouter`, `gemini`, or `coderabbit`, an `account_id`, and a
+`credential_env` naming a variable in `secrets.env`, plus provider `options`.
 
 ## Credentials per provider (names in Configuration, values in secrets.env)
 
@@ -95,16 +94,17 @@ browser devtools) and paste the value into the secrets file:
   team ID. Configure in the web console at `https://console.x.ai`, create
   a management key with billing read access, and store it as
   `XAI_MANAGEMENT_KEY`. Set `team_id` in the provider options.
-- **OpenRouter**: tracks per-generation token usage and cost. Get an API key
-  from `https://openrouter.ai/keys` and store it as `OPENROUTER_API_KEY`.
-  Set `generation_id` in options to track a specific generation, or use
-  `account_id` as the generation ID.
-- **Gemini (Google)**: tracks billing data via Google Cloud Billing API.
-  Requires a Google Cloud project with billing enabled. Create a service
-  account with billing read permissions, download the JSON key, and store
-  the JSON content as `GEMINI_BILLING_KEY`. Set `project_id` and
-  `billing_account_id` in options. The add-on handles OAuth2 JWT authentication
-  automatically using the service account credentials.
+- **OpenRouter**: tracks account-level purchased credits, usage, and remaining
+  balance in USD. Create a management key at
+  `https://openrouter.ai/settings/keys`, store it as `OPENROUTER_API_KEY`,
+  and set `options: {mode: credits}`. The provider uses
+  `https://openrouter.ai/api/v1/credits`; generation IDs are not account usage.
+- **Gemini (Google)**: tracks real current-month Gemini-related spend from a
+  Google Cloud Billing export in BigQuery. Enable the export, give the service
+  account BigQuery Job User and Data Viewer roles, store its JSON as
+  `GEMINI_SERVICE_ACCOUNT_KEY`, and set `project_id` plus
+  `billing_export_table: project.dataset.table`. The add-on performs OAuth2
+  JWT authentication automatically.
 - **CodeRabbit**: tracks review metrics (total reviews, complexity scores,
   review times, comments). Get an API key from
   `https://coderabbit.ai/settings/api` and store it as `CODERABBIT_API_KEY`.

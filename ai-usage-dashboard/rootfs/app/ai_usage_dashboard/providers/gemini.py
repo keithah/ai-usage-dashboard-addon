@@ -1,38 +1,36 @@
-"""Google Gemini provider: usage tracking via Cloud Billing API.
+"""Google Gemini cost tracking from a Google Cloud billing export.
 
-Google Gemini API usage can be tracked through the Google Cloud Billing API.
-This requires a Google Cloud project with billing enabled and appropriate
-service account credentials.
+Google's Cloud Billing REST API exposes catalog prices, not accrued spend. To
+report real Gemini cost, enable a Cloud Billing export to BigQuery and give the
+service account BigQuery Job User plus BigQuery Data Viewer access.
 
 Setup instructions:
-1. Create a Google Cloud project at https://console.cloud.google.com
-2. Enable the Gemini API and Cloud Billing API
-3. Create a service account with billing read permissions:
-   - Go to IAM & Admin > Service Accounts
-   - Create service account with "Billing Account Viewer" role
-4. Create and download a JSON key for the service account
-5. Store the JSON key content in secrets.env as GEMINI_SERVICE_ACCOUNT_KEY
-6. Configure the provider with your project ID and billing account ID
-
-Note: This provider tracks billing data, not per-request usage. For detailed
-per-request metrics, use the Gemini API's built-in usage tracking in responses.
+1. Enable Cloud Billing export to BigQuery:
+   https://cloud.google.com/billing/docs/how-to/export-data-bigquery
+2. Create a service account with BigQuery Job User and BigQuery Data Viewer
+3. Create/download its JSON key
+4. Store the JSON content in secrets.env as GEMINI_SERVICE_ACCOUNT_KEY
+5. Set project_id and billing_export_table in provider options
 """
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
+import re
 import time
-from datetime import datetime, timezone
+from urllib.parse import urlencode, quote
 
+from ..http_client import HttpAuthError, HttpError, HttpRateLimitError, HttpTransientError
 from ..models import AccountConfig, AccountSnapshot, Metric, SnapshotStatus, Unit, Window
 from .base import CollectContext
 from ._helpers import _Auth, as_number, classify_http, fresh, resolve_live_credential, terminal
 
 provider_name = "gemini"
-
-DEFAULT_BILLING_URL = "https://cloudbilling.googleapis.com/v1/billingAccounts/{billing_account_id}/services/{service_id}/skus"
 DEFAULT_TOKEN_URL = "https://oauth2.googleapis.com/token"
+DEFAULT_BQ_URL = "https://bigquery.googleapis.com/bigquery/v2/projects/{project_id}/queries"
+_ALLOWED_TOKEN_URLS = {DEFAULT_TOKEN_URL, "https://www.googleapis.com/oauth2/v4/token"}
+_TABLE_RE = re.compile(r"^[A-Za-z0-9_-]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$")
+_PROJECT_RE = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
 
 
 class Adapter:
@@ -42,233 +40,190 @@ class Adapter:
         opts = account.options
         if ctx.fixture_mode:
             return _from_fixture(account, ctx.account_fixture)
-
         project_id = str(opts.get("project_id", "")).strip()
-        billing_account_id = str(opts.get("billing_account_id", "")).strip()
-
+        export_table = str(opts.get("billing_export_table", "")).strip()
         if not project_id:
+            return terminal(account, SnapshotStatus.ERROR, "Gemini provider requires 'project_id' in options")
+        if not _PROJECT_RE.fullmatch(project_id):
+            return terminal(account, SnapshotStatus.ERROR, "Gemini project_id is not a valid Google Cloud project ID")
+        if not _TABLE_RE.fullmatch(export_table):
             return terminal(
                 account,
                 SnapshotStatus.ERROR,
-                "Gemini provider requires 'project_id' in options",
+                "Gemini provider requires billing_export_table as project.dataset.table",
             )
-
-        if not billing_account_id:
-            return terminal(
-                account,
-                SnapshotStatus.ERROR,
-                "Gemini provider requires 'billing_account_id' in options",
-            )
-
         try:
             secret = resolve_live_credential(account, ctx)
+            credentials = json.loads(secret)
+            if not isinstance(credentials, dict):
+                return terminal(account, SnapshotStatus.AUTH_ERROR, "Gemini credentials must be a JSON object")
         except _Auth as exc:
             return terminal(account, SnapshotStatus.AUTH_ERROR, str(exc))
-
-        # Load service account credentials
-        try:
-            credentials = json.loads(secret)
         except json.JSONDecodeError as exc:
-            return terminal(
-                account,
-                SnapshotStatus.AUTH_ERROR,
-                f"Gemini credentials must be valid JSON: {exc}",
-            )
+            return terminal(account, SnapshotStatus.AUTH_ERROR, f"Gemini credentials error: invalid JSON ({exc})")
 
-        # Validate required fields
-        required_fields = ["client_email", "private_key", "token_uri"]
-        missing = [f for f in required_fields if f not in credentials]
-        if missing:
-            return terminal(
-                account,
-                SnapshotStatus.AUTH_ERROR,
-                f"Gemini service account JSON missing fields: {', '.join(missing)}",
-            )
-
-        # Get access token using JWT
         try:
             access_token = _get_access_token(credentials, ctx)
-        except Exception as exc:
-            return terminal(
-                account,
-                SnapshotStatus.AUTH_ERROR,
-                f"Failed to obtain Google Cloud access token: {exc}",
-            )
+        except HttpAuthError as exc:
+            return terminal(account, SnapshotStatus.AUTH_ERROR, str(exc))
+        except (HttpRateLimitError, HttpTransientError):
+            raise
+        except HttpError as exc:
+            # OAuth errors like invalid_grant return 400, mapped to base HttpError
+            return terminal(account, SnapshotStatus.AUTH_ERROR, f"Gemini credentials error: {exc}")
+        except (KeyError, ValueError, RuntimeError) as exc:
+            return terminal(account, SnapshotStatus.AUTH_ERROR, f"Gemini credentials error: {exc}")
 
-        headers = {
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json",
-        }
-
-        # Query billing information
-        billing_url = opts.get("billing_url", DEFAULT_BILLING_URL)
-        if "{billing_account_id}" in billing_url:
-            billing_url = billing_url.format(billing_account_id=billing_account_id)
-
-        # Add project filter
-        billing_url += f"?filter=project:{project_id}"
-
+        query = _billing_query(export_table)
         try:
-            resp = ctx.http.get(billing_url, headers=headers)
+            response = _run_bigquery(ctx, project_id, access_token, query)
         except Exception as exc:
             return classify_http(account, exc)
-
-        return _from_live(account, resp.body, project_id)
+        return _from_live(account, response.body, project_id)
 
     def fixture_names(self) -> list[str]:
         return ["usage"]
 
 
+def _run_bigquery(ctx: CollectContext, project_id: str, access_token: str, query: str):
+    headers = {"Authorization": f"Bearer {access_token}"}
+    response = ctx.http.request(
+        "POST",
+        DEFAULT_BQ_URL.format(project_id=quote(project_id, safe="")),
+        headers=headers,
+        json={"query": query, "useLegacySql": False, "timeoutMs": 10000},
+    )
+    body = response.body
+    if not isinstance(body, dict) or body.get("jobComplete") is not False:
+        return response
+    reference = body.get("jobReference")
+    if not isinstance(reference, dict) or not reference.get("jobId"):
+        raise HttpTransientError("Gemini BigQuery query did not complete and returned no job reference")
+    location = reference.get("location")
+    poll_url = (
+        "https://bigquery.googleapis.com/bigquery/v2/projects/"
+        f"{quote(project_id, safe='')}/queries/{quote(str(reference['jobId']), safe='')}"
+    )
+    poll_params = {"timeoutMs": "2000"}
+    if location:
+        poll_params["location"] = str(location)
+    poll_url += "?" + urlencode(poll_params)
+    for _ in range(3):
+        sleep = getattr(ctx.http, "sleep", time.sleep)
+        sleep(1)
+        polled = ctx.http.get(poll_url, headers=headers)
+        if isinstance(polled.body, dict) and polled.body.get("jobComplete") is not False:
+            return polled
+    raise HttpTransientError("Gemini BigQuery query remained incomplete after polling")
+
+
+def _billing_query(export_table: str) -> str:
+    return (
+        "SELECT currency, "
+        "COALESCE(SUM(cost), 0) + COALESCE(SUM((SELECT SUM(c.amount) FROM UNNEST(credits) c)), 0) AS total_cost, "
+        "COUNT(*) AS usage_rows "
+        f"FROM `{export_table}` "
+        "WHERE invoice.month = FORMAT_DATE('%Y%m', CURRENT_DATE('America/Los_Angeles')) "
+        "AND (service.description LIKE '%Gemini%' "
+        "OR service.description LIKE '%Generative Language%' "
+        "OR (service.description LIKE '%Vertex AI%' AND LOWER(sku.description) LIKE '%gemini%')) "
+        "GROUP BY currency"
+    )
+
+
 def _get_access_token(credentials: dict, ctx: CollectContext) -> str:
-    """Exchange service account credentials for an access token using JWT."""
+    """Create a service-account JWT and exchange it through SafeHttpClient."""
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import padding
-    
-    # Create JWT claims
+
+    token_url = str(credentials.get("token_uri", DEFAULT_TOKEN_URL))
+    if token_url not in _ALLOWED_TOKEN_URLS:
+        raise ValueError("token_uri must be a Google OAuth token endpoint")
+    for field in ("client_email", "private_key"):
+        if not credentials.get(field):
+            raise KeyError(field)
+
     now = int(time.time())
     claims = {
         "iss": credentials["client_email"],
-        "scope": "https://www.googleapis.com/auth/cloud-billing.readonly",
-        "aud": credentials.get("token_uri", DEFAULT_TOKEN_URL),
-        "exp": now + 3600,  # 1 hour
+        "scope": "https://www.googleapis.com/auth/cloud-platform",
+        "aud": token_url,
+        "exp": now + 3600,
         "iat": now,
     }
-
-    # Encode JWT header
     header = {"alg": "RS256", "typ": "JWT"}
-    header_b64 = base64.urlsafe_b64encode(json.dumps(header).encode()).decode().rstrip("=")
-    claims_b64 = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
 
-    # Sign JWT with private key
+    def encoded(value: dict) -> str:
+        raw = json.dumps(value, separators=(",", ":")).encode()
+        return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+    header_b64 = encoded(header)
+    claims_b64 = encoded(claims)
     private_key = serialization.load_pem_private_key(
-        credentials["private_key"].encode(),
-        password=None,
+        credentials["private_key"].encode(), password=None
     )
-
     signing_input = f"{header_b64}.{claims_b64}".encode()
     signature = private_key.sign(signing_input, padding.PKCS1v15(), hashes.SHA256())
-    signature_b64 = base64.urlsafe_b64encode(signature).decode().rstrip("=")
-
-    jwt_token = f"{header_b64}.{claims_b64}.{signature_b64}"
-
-    # Exchange JWT for access token
-    token_url = credentials.get("token_uri", DEFAULT_TOKEN_URL)
-    token_data = {
-        "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
-        "assertion": jwt_token,
-    }
-
-    # Use urllib to post to token endpoint
-    import urllib.request
-    import urllib.parse
-
-    data = urllib.parse.urlencode(token_data).encode()
-    req = urllib.request.Request(
+    assertion = f"{header_b64}.{claims_b64}." + base64.urlsafe_b64encode(signature).decode().rstrip("=")
+    response = ctx.http.request(
+        "POST",
         token_url,
-        data=data,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        method="POST",
+        form={
+            "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+            "assertion": assertion,
+        },
     )
-
-    try:
-        with urllib.request.urlopen(req, timeout=30) as response:
-            token_response = json.loads(response.read().decode())
-            return token_response["access_token"]
-    except Exception as exc:
-        raise RuntimeError(f"Token exchange failed: {exc}") from exc
+    if not isinstance(response.body, dict) or not response.body.get("access_token"):
+        raise RuntimeError("Google OAuth response did not contain an access token")
+    return str(response.body["access_token"])
 
 
 def _from_fixture(account: AccountConfig, fixture: dict) -> AccountSnapshot:
     error = (fixture or {}).get("error")
     if error:
         return _snapshot_from_error(account, error)
-    responses = (fixture or {}).get("responses", {})
-    body = responses.get("usage", {})
-    project_id = account.options.get("project_id", account.account_id)
-    return _from_live(account, body, project_id)
+    body = (fixture or {}).get("responses", {}).get("usage", {})
+    return _from_live(account, body, str(account.options.get("project_id", account.account_id)))
 
 
 def _from_live(account: AccountConfig, body: object, project_id: str) -> AccountSnapshot:
-    """Parse billing response into metrics.
-
-    Note: The actual Google Cloud Billing API response structure is complex.
-    This is a simplified parser that extracts cost information.
-    In production, you'd use the Cloud Billing API client library.
-    """
     if not isinstance(body, dict):
-        return terminal(
-            account,
-            SnapshotStatus.UNSUPPORTED,
-            "Gemini billing endpoint returned unexpected response format",
-        )
-
-    metrics: list[Metric] = []
-
-    # Extract cost information
-    # The actual API returns a list of SKUs with pricing info
-    # This is a simplified example
-    total_cost = as_number(body.get("totalCost"))
-    if total_cost is not None:
-        metrics.append(
-            Metric(
-                key="monthly_cost",
-                label="Monthly Cost (USD)",
-                value=round(total_cost, 2),
-                unit=Unit.USD,
-                window=Window(kind="calendar_month", label="current month"),
-            )
-        )
-
-    # Extract usage metrics if available
-    usage = body.get("usage", {})
-    if isinstance(usage, dict):
-        prompt_tokens = as_number(usage.get("promptTokens"))
-        completion_tokens = as_number(usage.get("completionTokens"))
-        total_tokens = as_number(usage.get("totalTokens"))
-
-        if prompt_tokens is not None:
-            metrics.append(
-                Metric(
-                    key="prompt_tokens",
-                    label="Prompt Tokens",
-                    value=int(prompt_tokens),
-                    unit=Unit.TOKENS,
-                    window=Window(kind="calendar_month", label="current month"),
-                )
-            )
-
-        if completion_tokens is not None:
-            metrics.append(
-                Metric(
-                    key="completion_tokens",
-                    label="Completion Tokens",
-                    value=int(completion_tokens),
-                    unit=Unit.TOKENS,
-                    window=Window(kind="calendar_month", label="current month"),
-                )
-            )
-
-        if total_tokens is not None:
-            metrics.append(
-                Metric(
-                    key="total_tokens",
-                    label="Total Tokens",
-                    value=int(total_tokens),
-                    unit=Unit.TOKENS,
-                    window=Window(kind="calendar_month", label="current month"),
-                )
-            )
-
-    if not metrics:
-        return terminal(
-            account,
-            SnapshotStatus.UNSUPPORTED,
-            "Gemini billing endpoint returned no usable data. "
-            "Note: Full billing API integration requires google-auth library.",
-        )
-
-    reason = f"Project {project_id} billing data"
-    return fresh(account, metrics, reason)
+        return terminal(account, SnapshotStatus.UNSUPPORTED, "Gemini BigQuery response was not an object")
+    if body.get("jobComplete") is False:
+        raise HttpTransientError("Gemini BigQuery query did not complete before timeout")
+    rows = body.get("rows", [])
+    if not isinstance(rows, list):
+        return terminal(account, SnapshotStatus.ERROR, "Gemini BigQuery response rows had an unexpected shape")
+    if not rows:
+        # No billing data for current month - return zero cost, not unsupported
+        currency = str(account.options.get("currency", "USD")).upper()
+        unit = {"USD": Unit.USD, "CNY": Unit.CNY}.get(currency)
+        if unit is None:
+            return terminal(account, SnapshotStatus.UNSUPPORTED, f"Configured currency {currency!r} is not supported")
+        window = Window(kind="calendar_month", label="current month")
+        metrics = [
+            Metric("monthly_cost", f"Monthly Cost ({currency})", 0.0, unit, window),
+            Metric("billing_rows", "Billing Rows", 0, Unit.COUNT, window),
+        ]
+        return fresh(account, metrics, f"Gemini billing export for project {project_id} (no usage this month)")
+    if len(rows) != 1:
+        return terminal(account, SnapshotStatus.ERROR, "Gemini billing export returned mixed currencies")
+    values = rows[0].get("f", []) if isinstance(rows[0], dict) else []
+    if not isinstance(values, list):
+        return terminal(account, SnapshotStatus.ERROR, "Gemini BigQuery row had an unexpected shape")
+    currency = str(values[0].get("v", "")).upper() if len(values) > 0 and isinstance(values[0], dict) else ""
+    unit = {"USD": Unit.USD, "CNY": Unit.CNY}.get(currency)
+    if unit is None:
+        return terminal(account, SnapshotStatus.UNSUPPORTED, "Gemini billing export returned an unsupported or missing currency")
+    total_cost = as_number(values[1].get("v")) if len(values) > 1 and isinstance(values[1], dict) else None
+    usage_rows = as_number(values[2].get("v")) if len(values) > 2 and isinstance(values[2], dict) else None
+    if total_cost is None:
+        return terminal(account, SnapshotStatus.UNSUPPORTED, "Gemini billing export response missing total cost")
+    window = Window(kind="calendar_month", label="current month")
+    metrics = [Metric("monthly_cost", f"Monthly Cost ({currency})", round(total_cost, 6), unit, window)]
+    if usage_rows is not None:
+        metrics.append(Metric("billing_rows", "Billing Rows", int(usage_rows), Unit.COUNT, window))
+    return fresh(account, metrics, f"Gemini billing export for project {project_id}")
 
 
 def _snapshot_from_error(account: AccountConfig, error: dict) -> AccountSnapshot:
