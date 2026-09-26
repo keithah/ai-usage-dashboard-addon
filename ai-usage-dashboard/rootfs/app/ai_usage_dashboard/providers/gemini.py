@@ -7,9 +7,11 @@ service account credentials.
 Setup instructions:
 1. Create a Google Cloud project at https://console.cloud.google.com
 2. Enable the Gemini API and Cloud Billing API
-3. Create a service account with billing read permissions
-4. Download the service account JSON key
-5. Store the key path in secrets.env as GEMINI_BILLING_KEY_PATH
+3. Create a service account with billing read permissions:
+   - Go to IAM & Admin > Service Accounts
+   - Create service account with "Billing Account Viewer" role
+4. Create and download a JSON key for the service account
+5. Store the JSON key content in secrets.env as GEMINI_SERVICE_ACCOUNT_KEY
 6. Configure the provider with your project ID and billing account ID
 
 Note: This provider tracks billing data, not per-request usage. For detailed
@@ -17,7 +19,10 @@ per-request metrics, use the Gemini API's built-in usage tracking in responses.
 """
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
+import time
 from datetime import datetime, timezone
 
 from ..models import AccountConfig, AccountSnapshot, Metric, SnapshotStatus, Unit, Window
@@ -27,6 +32,7 @@ from ._helpers import _Auth, as_number, classify_http, fresh, resolve_live_crede
 provider_name = "gemini"
 
 DEFAULT_BILLING_URL = "https://cloudbilling.googleapis.com/v1/billingAccounts/{billing_account_id}/services/{service_id}/skus"
+DEFAULT_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 
 class Adapter:
@@ -69,11 +75,28 @@ class Adapter:
                 f"Gemini credentials must be valid JSON: {exc}",
             )
 
-        # For now, we'll use a simplified approach - in production, you'd use
-        # google-auth library to get an access token from the service account
-        # This is a placeholder that shows the structure
+        # Validate required fields
+        required_fields = ["client_email", "private_key", "token_uri"]
+        missing = [f for f in required_fields if f not in credentials]
+        if missing:
+            return terminal(
+                account,
+                SnapshotStatus.AUTH_ERROR,
+                f"Gemini service account JSON missing fields: {', '.join(missing)}",
+            )
+
+        # Get access token using JWT
+        try:
+            access_token = _get_access_token(credentials, ctx)
+        except Exception as exc:
+            return terminal(
+                account,
+                SnapshotStatus.AUTH_ERROR,
+                f"Failed to obtain Google Cloud access token: {exc}",
+            )
+
         headers = {
-            "Authorization": f"Bearer {credentials.get('private_key', '')}",
+            "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json",
         }
 
@@ -94,6 +117,65 @@ class Adapter:
 
     def fixture_names(self) -> list[str]:
         return ["usage"]
+
+
+def _get_access_token(credentials: dict, ctx: CollectContext) -> str:
+    """Exchange service account credentials for an access token using JWT."""
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding
+    
+    # Create JWT claims
+    now = int(time.time())
+    claims = {
+        "iss": credentials["client_email"],
+        "scope": "https://www.googleapis.com/auth/cloud-billing.readonly",
+        "aud": credentials.get("token_uri", DEFAULT_TOKEN_URL),
+        "exp": now + 3600,  # 1 hour
+        "iat": now,
+    }
+
+    # Encode JWT header
+    header = {"alg": "RS256", "typ": "JWT"}
+    header_b64 = base64.urlsafe_b64encode(json.dumps(header).encode()).decode().rstrip("=")
+    claims_b64 = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
+
+    # Sign JWT with private key
+    private_key = serialization.load_pem_private_key(
+        credentials["private_key"].encode(),
+        password=None,
+    )
+
+    signing_input = f"{header_b64}.{claims_b64}".encode()
+    signature = private_key.sign(signing_input, padding.PKCS1v15(), hashes.SHA256())
+    signature_b64 = base64.urlsafe_b64encode(signature).decode().rstrip("=")
+
+    jwt_token = f"{header_b64}.{claims_b64}.{signature_b64}"
+
+    # Exchange JWT for access token
+    token_url = credentials.get("token_uri", DEFAULT_TOKEN_URL)
+    token_data = {
+        "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+        "assertion": jwt_token,
+    }
+
+    # Use urllib to post to token endpoint
+    import urllib.request
+    import urllib.parse
+
+    data = urllib.parse.urlencode(token_data).encode()
+    req = urllib.request.Request(
+        token_url,
+        data=data,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            token_response = json.loads(response.read().decode())
+            return token_response["access_token"]
+    except Exception as exc:
+        raise RuntimeError(f"Token exchange failed: {exc}") from exc
 
 
 def _from_fixture(account: AccountConfig, fixture: dict) -> AccountSnapshot:

@@ -43,3 +43,78 @@ schema:
       account_id: str
       display_name: str?
       credential_env: str
+      options: str?
+# Provider setup instructions (shown in Configuration tab)
+descriptions:
+  accounts: |
+    Add one entry per AI provider account. Each account needs:
+    
+    **provider**: One of: openai, anthropic, kimi, deepseek, opencode_go, muse_code, alibaba_coding_plan, grok, openrouter, gemini, coderabbit
+    
+    **account_id**: Unique identifier for this account (e.g., "primary", "secondary")
+    
+    **display_name**: Human-readable name shown in Home Assistant (optional, defaults to account_id)
+    
+    **credential_env**: Name of environment variable in secrets.env holding the API key/token
+    
+    **options**: JSON object with provider-specific settings (see provider documentation)
+    
+    ## Provider Setup Instructions
+    
+    ### OpenAI
+    1. Get API key from https://platform.openai.com/api-keys
+    2. Store in secrets.env as OPENAI_API_KEY
+    3. Options: {"usage_url": "https://api.openai.com/v1/organization/usage/completions"}
+    
+    ### Anthropic
+    1. Get API key from https://console.anthropic.com/settings/keys
+    2. Store in secrets.env as ANTHROPIC_API_KEY
+    3. No additional options required
+    
+    ### Kimi (Moonshot AI)
+    1. Get API key from https://platform.moonshot.cn/console/api-keys
+    2. Store in secrets.env as KIMI_API_KEY
+    3. No additional options required
+    
+    ### DeepSeek
+    1. Get API key from https://platform.deepseek.com/api_keys
+    2. Store in secrets.env as DEEPSEEK_API_KEY
+    3. No additional options required
+    
+    ### OpenCode Go
+    1. Install opencode CLI: https://opencode.ai
+    2. Authenticate with your Go subscription
+    3. Store token in secrets.env as OPENCODE_GO_TOKEN
+    4. Options: {"mode": "local_stats"}
+    
+    ### Muse Code
+    1. Get API key from Meta AI platform
+    2. Store in secrets.env as MUSE_CODE_TOKEN
+    3. No additional options required
+    
+    ### Alibaba Coding Plan
+    1. Install bl CLI from Alibaba Cloud Model Studio
+    2. Configure DashScope API key in secrets.env
+    3. Options: {"opt_in": true, "cli_path": "bl", "timeout": 30}
+    
+    ### Grok (xAI)
+    1. Get management API key from https://console.x.ai (different from inference keys)
+    2. Store in secrets.env as XAI_MANAGEMENT_KEY
+    3. Options: {"team_id": "your_team_id"}
+    
+    ### OpenRouter
+    1. Get API key from https://openrouter.ai/keys
+    2. Store in secrets.env as OPENROUTER_API_KEY
+    3. Options: {"generation_id": "generation_to_track"}
+    
+    ### Gemini (Google)
+    1. Create Google Cloud project at https://console.cloud.google.com
+    2. Enable Gemini API and Cloud Billing API
+    3. Create service account with "Billing Account Viewer" role
+    4. Download JSON key and store content in secrets.env as GEMINI_SERVICE_ACCOUNT_KEY
+    5. Options: {"project_id": "your_project_id", "billing_account_id": "your_billing_account_id"}
+    
+    ### CodeRabbit
+    1. Get API key from https://coderabbit.ai/settings/api
+    2. Store in secrets.env as CODERABBIT_API_KEY
+    3. Options: {"organization_id": "your_org_id"}

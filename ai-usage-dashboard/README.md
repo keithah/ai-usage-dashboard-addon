@@ -103,8 +103,8 @@ browser devtools) and paste the value into the secrets file:
   Requires a Google Cloud project with billing enabled. Create a service
   account with billing read permissions, download the JSON key, and store
   the JSON content as `GEMINI_BILLING_KEY`. Set `project_id` and
-  `billing_account_id` in options. Note: requires google-auth library for
-  production use.
+  `billing_account_id` in options. The add-on handles OAuth2 JWT authentication
+  automatically using the service account credentials.
 - **CodeRabbit**: tracks review metrics (total reviews, complexity scores,
   review times, comments). Get an API key from
   `https://coderabbit.ai/settings/api` and store it as `CODERABBIT_API_KEY`.
