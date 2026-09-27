@@ -255,13 +255,21 @@ def options_to_runtime(
                 )
             credential_ref = CredentialRef(value=cred_value.strip())
         
+        # Build options dict from provider-specific fields
+        account_options = {}
+        for key in ['team_id', 'organization_id', 'days', 'limit', 'start_date', 
+                    'end_date', 'project_id', 'billing_export_table', 'currency',
+                    'mode', 'opt_in', 'cli_path', 'timeout']:
+            if key in raw:
+                account_options[key] = raw[key]
+        
         accounts.append(
             AccountConfig(
                 provider=provider,
                 account_id=account_id,
                 display_name=display_name,
                 credential=credential_ref,
-                options=_account_options(raw.get("options"), where),
+                options=account_options,
             )
         )
 
