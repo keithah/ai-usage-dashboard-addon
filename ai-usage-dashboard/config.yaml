@@ -44,4 +44,17 @@ schema:
       display_name: str?
       credential_env: str?
       credential_value: str?
-      options: str?
+      # Provider-specific options (fill in based on provider)
+      team_id: str?
+      organization_id: str?
+      days: int?
+      limit: int?
+      start_date: str?
+      end_date: str?
+      project_id: str?
+      billing_export_table: str?
+      currency: str?
+      mode: str?
+      opt_in: bool?
+      cli_path: str?
+      timeout: int?
