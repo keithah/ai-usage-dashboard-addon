@@ -39,7 +39,7 @@ schema:
   discovery_prefix: str?
   data_dir: str?
   accounts:
-    - provider: str
+    - provider: select(openai|anthropic|grok|openrouter|gemini|coderabbit|kimi|deepseek|opencode_go|muse_code|alibaba_coding_plan)
       account_id: str
       display_name: str?
       credential_env: str?
