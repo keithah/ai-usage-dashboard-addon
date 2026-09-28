@@ -1,4 +1,3 @@
-import os
 
 import pytest
 
@@ -25,10 +24,9 @@ def _account(provider: str, **options) -> AccountConfig:
 
 
 @pytest.fixture
-def bridge_token():
-    os.environ["BRIDGE_TOKEN"] = "bridge-secret"
-    yield "bridge-secret"
-    os.environ.pop("BRIDGE_TOKEN", None)
+def bridge_token(monkeypatch):
+    monkeypatch.setenv("BRIDGE_TOKEN", "bridge-secret")
+    return "bridge-secret"
 
 
 class _HTTP:
@@ -160,8 +158,8 @@ def test_invalid_session_name_is_config_error_not_request(bridge_token, name):
     assert http.calls == []
 
 
-def test_missing_credential_env_is_auth_error():
-    os.environ.pop("BRIDGE_TOKEN", None)
+def test_missing_credential_env_is_auth_error(monkeypatch):
+    monkeypatch.delenv("BRIDGE_TOKEN", raising=False)
     http = _HTTP(_ok({}))
 
     snapshot = CodexAdapter().collect(_account("codex_oauth"), CollectContext(http=http))

@@ -272,7 +272,7 @@ def claude_usage_document(
 ) -> dict[str, Any]:
     authenticated = claude_auth_status([claude_bin], timeout, env=env)
     has_transcripts = projects_dir.is_dir()
-    totals = aggregate_claude_usage(projects_dir) if has_transcripts else aggregate_claude_usage(Path(os.devnull))
+    totals = aggregate_claude_usage(projects_dir)  # returns zero totals for a non-directory
     quota = "Claude Max remaining quota is not exposed by a supported API."
     if has_transcripts:
         note = f"Consumed local Claude Code transcript usage; {quota}"

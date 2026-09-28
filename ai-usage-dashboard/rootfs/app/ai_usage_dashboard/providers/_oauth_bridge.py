@@ -89,10 +89,7 @@ def fetch_bridge_document(
     headers = {"Authorization": f"Bearer {token}"}
     ca_file = bridge_ca_file(account)
     try:
-        if ca_file:
-            response = ctx.http.get(url, headers=headers, ca_file=ca_file)
-        else:
-            response = ctx.http.get(url, headers=headers)
+        response = ctx.http.get(url, headers=headers, ca_file=ca_file)
     except Exception as exc:  # classify_http maps every client failure
         return classify_http(account, exc)
     body = response.body
