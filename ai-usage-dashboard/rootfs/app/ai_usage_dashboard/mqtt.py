@@ -7,9 +7,16 @@ Discovery/state payloads never contain secrets or credential references.
 from __future__ import annotations
 
 import json
+import logging
 import re
 
 from .models import AccountSnapshot
+
+LOGGER = logging.getLogger(__name__)
+
+class MqttPublishError(RuntimeError):
+    """A broker publish did not complete successfully."""
+
 
 NODE_ID = "ai_usage_dashboard"
 DISCOVERY_PREFIX = "homeassistant"
@@ -145,6 +152,25 @@ def assert_no_secrets(payload: object) -> None:
             assert_no_secrets(item)
 
 
+def _queue_publish(client, topic: str, payload: str, *, retain: bool):
+    return client.publish(topic, payload, qos=1, retain=retain)
+
+
+def _wait_for_publish(info) -> None:
+    try:
+        info.wait_for_publish(timeout=10)
+        complete = info.is_published()
+    except (ValueError, RuntimeError) as exc:
+        raise MqttPublishError("MQTT publish failed") from exc
+    if not complete:
+        raise MqttPublishError("MQTT publish did not complete")
+
+
+def _publish_and_wait(client, topic: str, payload: str, *, retain: bool) -> None:
+    """Publish one retained message and wait for broker acknowledgement."""
+    _wait_for_publish(_queue_publish(client, topic, payload, retain=retain))
+
+
 def publish_live(
     snapshots: list[AccountSnapshot],
     *,
@@ -167,18 +193,58 @@ def publish_live(
     client.connect(host, port)
     client.loop_start()
     published = 0
+    errors: list[Exception] = []
     try:
         for snap in snapshots:
-            client.publish(
-                availability_topic(snap), AVAILABILITY_ONLINE, retain=True
-            )
-            published += 1
-            client.publish(state_topic(snap), json.dumps(state_payload(snap)), retain=retain)
-            published += 1
-            for topic, payload in discovery_payloads(snap, prefix=discovery_prefix):
-                client.publish(topic, json.dumps(payload), retain=retain)
+            availability = availability_topic(snap)
+            try:
+                pending = []
+                state_topic_name = state_topic(snap)
+                pending.append(
+                    (
+                        _queue_publish(
+                            client,
+                            state_topic_name,
+                            json.dumps(state_payload(snap)),
+                            retain=retain,
+                        ),
+                        state_topic_name,
+                    )
+                )
                 published += 1
+                for topic, payload in discovery_payloads(snap, prefix=discovery_prefix):
+                    pending.append(
+                        (
+                            _queue_publish(client, topic, json.dumps(payload), retain=retain),
+                            topic,
+                        )
+                    )
+                    published += 1
+                for info, _topic in pending:
+                    _wait_for_publish(info)
+                _publish_and_wait(
+                    client,
+                    availability,
+                    AVAILABILITY_ONLINE,
+                    retain=True,
+                )
+                published += 1
+            except Exception as exc:
+                try:
+                    _publish_and_wait(
+                        client,
+                        availability,
+                        AVAILABILITY_OFFLINE,
+                        retain=True,
+                    )
+                except Exception:
+                    LOGGER.warning("failed to publish offline availability")
+                errors.append(exc)
+                if isinstance(exc, (MqttPublishError, OSError)):
+                    break
     finally:
         client.loop_stop()
         client.disconnect()
+    if errors:
+        raise errors[0]
     return {"published": published, "host": host, "port": port}
