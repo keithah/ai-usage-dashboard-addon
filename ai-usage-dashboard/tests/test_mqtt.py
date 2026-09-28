@@ -141,3 +141,47 @@ def test_publish_live_marks_offline_when_discovery_fails(monkeypatch):
     ]
     assert availability_payloads[-1] == AVAILABILITY_OFFLINE
     assert "online" not in availability_payloads
+
+
+# --- secret-key guard vs. token *counters* -----------------------------------
+
+
+def _snap(metrics):
+    from ai_usage_dashboard.models import Window
+
+    return AccountSnapshot(
+        provider="claude_code_oauth",
+        account_id="personal",
+        display_name="Claude",
+        status=SnapshotStatus.FRESH,
+        reason="",
+        fetched_at="2026-09-28T00:00:00Z",
+        metrics=[Metric(k, k, v, Unit.TOKENS, Window(kind="calendar_month", label="m")) for k, v in metrics],
+    )
+
+
+def test_state_payload_allows_numeric_token_counters():
+    """Regression: 0.2.0 crashed publish with 'payload key looks like a secret: input_tokens'."""
+    from ai_usage_dashboard.mqtt import state_payload
+
+    payload = state_payload(_snap([("input_tokens", 100), ("cache_read_input_tokens", 5), ("total_tokens", 105)]))
+    assert payload["metrics"] == {"input_tokens": 100, "cache_read_input_tokens": 5, "total_tokens": 105}
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"metrics": {"access_token": 1}},              # not the *_tokens counter shape
+        {"metrics": {"tokens_secret": 1}},
+        {"metrics": {"input_tokens": "eyJhbGciOi..."}},  # counter name but string value
+        {"metrics": {"input_tokens": True}},
+        {"metrics": {"token": 5}},                       # singular
+        {"refresh_token": "x"},
+        {"metrics": {"bearer_tokens": {"nested": "v"}}},  # counter name, non-numeric value
+    ],
+)
+def test_state_payload_still_rejects_secret_shaped_keys(payload):
+    from ai_usage_dashboard.mqtt import assert_no_secrets
+
+    with pytest.raises(ValueError, match="looks like a secret"):
+        assert_no_secrets(payload)

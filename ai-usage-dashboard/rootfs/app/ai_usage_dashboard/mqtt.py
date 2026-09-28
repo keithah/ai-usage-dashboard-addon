@@ -10,7 +10,7 @@ import json
 import logging
 import re
 
-from .models import AccountSnapshot
+from .models import AccountSnapshot, Unit
 
 LOGGER = logging.getLogger(__name__)
 
@@ -24,6 +24,24 @@ AVAILABILITY_ONLINE = "online"
 AVAILABILITY_OFFLINE = "offline"
 
 _SECRET_KEY_HINTS = ("api_key", "apikey", "token", "secret", "password", "bearer", "credential")
+# LLM usage counters legitimately contain the word "token" (input_tokens,
+# cache_read_input_tokens, total_tokens ...). They are numeric metric keys, not
+# credentials. Only this exact shape is exempt from the secret-key guard, and
+# only when the value is a plain number.
+_TOKEN_COUNTER_RE = re.compile(r"^(?:[a-z0-9]+_)*tokens$")
+_UNIT_VALUES = frozenset(u.value for u in Unit)
+
+
+def _is_token_counter(key: str, value: object) -> bool:
+    """A token *counter* is a `*_tokens` key whose value is a number (state
+    payload) or one of the fixed Unit enum strings (metric_units map)."""
+    if not _TOKEN_COUNTER_RE.fullmatch(key):
+        return False
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float)):
+        return True
+    return isinstance(value, str) and value in _UNIT_VALUES
 
 
 def slug(text: str) -> str:
@@ -144,6 +162,8 @@ def assert_no_secrets(payload: object) -> None:
     if isinstance(payload, dict):
         for key, value in payload.items():
             lowered = str(key).lower()
+            if _is_token_counter(lowered, value):
+                continue
             if any(hint in lowered for hint in _SECRET_KEY_HINTS):
                 raise ValueError(f"payload key looks like a secret: {key!r}")
             assert_no_secrets(value)
