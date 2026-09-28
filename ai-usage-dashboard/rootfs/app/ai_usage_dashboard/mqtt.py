@@ -162,9 +162,13 @@ def assert_no_secrets(payload: object) -> None:
     if isinstance(payload, dict):
         for key, value in payload.items():
             lowered = str(key).lower()
+            # A numeric `*_tokens` counter is exempt from the "token" hint only;
+            # every other hint (api_key, secret, bearer, ...) still applies, so
+            # e.g. `api_key_tokens` or `secret_tokens` are still rejected.
+            hints = _SECRET_KEY_HINTS
             if _is_token_counter(lowered, value):
-                continue
-            if any(hint in lowered for hint in _SECRET_KEY_HINTS):
+                hints = tuple(h for h in hints if h != "token")
+            if any(hint in lowered for hint in hints):
                 raise ValueError(f"payload key looks like a secret: {key!r}")
             assert_no_secrets(value)
     elif isinstance(payload, list):

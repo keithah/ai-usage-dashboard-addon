@@ -178,6 +178,11 @@ def test_state_payload_allows_numeric_token_counters():
         {"metrics": {"token": 5}},                       # singular
         {"refresh_token": "x"},
         {"metrics": {"bearer_tokens": {"nested": "v"}}},  # counter name, non-numeric value
+        {"metrics": {"api_key_tokens": 5}},              # counter shape but carries another hint
+        {"metrics": {"secret_tokens": 5}},
+        {"metrics": {"bearer_tokens": 5}},
+        {"metrics": {"password_tokens": 5}},
+        {"metrics": {"credential_tokens": 5}},
     ],
 )
 def test_state_payload_still_rejects_secret_shaped_keys(payload):
