@@ -117,7 +117,9 @@ def cmd_publish(args) -> int:
             host=mqtt_cfg.get("host", "localhost"),
             port=int(mqtt_cfg.get("port", 1883)),
             username=mqtt_cfg.get("username"),
-            password=os.environ.get(mqtt_cfg.get("password_env", "")) or None,
+            password=mqtt_cfg.get("password_value")
+            or os.environ.get(mqtt_cfg.get("password_env", ""))
+            or None,
             discovery_prefix=prefix,
         )
     except RuntimeError as exc:

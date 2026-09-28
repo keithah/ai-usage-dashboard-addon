@@ -10,6 +10,9 @@ configuration:
   mqtt_password_env:
     name: MQTT password environment variable
     description: Name of the variable in /config/secrets.env containing the broker password.
+  mqtt_password_value:
+    name: MQTT password
+    description: Optional protected GUI password. Use this instead of mqtt_password_env when the broker credential is configured in Home Assistant.
   secrets_file:
     name: Secrets file
     description: Fixed default is /config/secrets.env. Keep raw API keys and service-account JSON only in this file.
@@ -24,54 +27,81 @@ configuration:
   accounts:
     name: Provider accounts
     description: >-
-      Add one account object per provider. Use the provider dropdown, account ID,
-      and either a credential environment variable name or direct credential value.
-      Provider-specific fields below are optional and only apply to the selected provider.
+      Add one row for each provider account. First select Provider and enter a
+      stable Account ID such as primary or work. Then choose exactly one
+      credential method: credential_env is the name of a variable in
+      /config/secrets.env, while credential_value is the actual secret entered
+      in this form. credential_env is recommended. Example secrets.env entries:
+      OPENAI_API_KEY_PRIMARY=... and ANTHROPIC_API_KEY=.... Never put a secret
+      in Account ID, Display name, or a provider option.
 
-      OpenAI: use an API key with organization read access. Anthropic: use an API key.
-      Grok: set team_id and use a management key. OpenRouter: use a management key.
-      Gemini: set project_id and billing_export_table and use a service-account JSON key.
-      CodeRabbit: set organization_id and use an API key. Alibaba Coding Plan: set
-      opt_in, cli_path, and timeout and use the bl cookie. Kimi and DeepSeek use
-      their normal API keys. OpenCode Go and Muse Code expose configuration-only data.
+      Setup by provider: OpenAI uses provider openai, a key with organization
+      usage/billing read access, and credential_env OPENAI_API_KEY_PRIMARY.
+      Anthropic uses provider anthropic and credential_env ANTHROPIC_API_KEY;
+      its API exposes API usage/rate limits, not Claude.ai subscription quota.
+      OpenRouter uses provider openrouter and a management key. Grok uses
+      provider grok, a management key, and Team ID. Kimi and DeepSeek use
+      providers kimi or deepseek and their normal API keys. CodeRabbit uses
+      provider coderabbit, an API key, Organization ID, and optionally the
+      date/lookback fields. Gemini uses provider gemini, a Google service-account
+      JSON credential, Billing project ID, and Billing export table; grant the
+      service account BigQuery Job User and BigQuery Data Viewer roles. Alibaba
+      Coding Plan uses provider alibaba_coding_plan, opt_in enabled, the bl
+      cookie, CLI path, and timeout. OpenCode Go and Muse Code are diagnostic
+      configuration entries only; no documented subscription-quota API is
+      polled. Mac Codex or Claude CLI login files are not copied into this HA
+      container, so use the provider API credential requested above.
   accounts.provider:
     name: Provider
-    description: "Select a supported provider: openai, anthropic, kimi, deepseek, opencode_go, muse_code, alibaba_coding_plan, grok, openrouter, gemini, or coderabbit."
+    description: Select the provider for this row. Use openai for OpenAI API usage, anthropic for Claude API usage, openrouter for OpenRouter credits, grok for xAI team usage, gemini for Google Cloud billing, coderabbit for review metrics, kimi or deepseek for API usage, alibaba_coding_plan for the Coding Plan CLI, or opencode_go/muse_code for configuration-only entries.
   accounts.account_id:
     name: Account ID
-    description: Stable unique ID such as primary or work.
+    description: Stable unique ID used in entity names, for example primary, work, or billing. Use a different ID for each account of the same provider.
   accounts.display_name:
     name: Display name
-    description: Optional friendly name shown in Home Assistant sensors.
+    description: Optional friendly name shown in Home Assistant sensors, for example OpenAI production or Claude work.
   accounts.credential_env:
     name: Credential environment variable
-    description: Name only, for example OPENROUTER_API_KEY. Do not paste the secret here.
+    description: Recommended method. Enter only a variable name, such as OPENAI_API_KEY_PRIMARY or ANTHROPIC_API_KEY, then put NAME=value in /config/secrets.env. Do not paste the secret here.
   accounts.credential_value:
     name: Direct credential value
-    description: Optional direct credential for testing. Prefer credential_env with /config/secrets.env for production.
+    description: Optional protected form field for a secret or service-account JSON. Use only when you are not using credential_env; credential_env in /config/secrets.env is preferred for backups and portability.
   accounts.team_id:
-    name: Team ID
+    name: Team ID (Grok)
+    description: Grok only. Required for xAI team billing; enter the team identifier associated with the management API key.
   accounts.organization_id:
-    name: Organization ID
+    name: Organization ID (CodeRabbit)
+    description: CodeRabbit only. Enter the organization ID whose review metrics should be collected.
   accounts.days:
-    name: Lookback days
+    name: Lookback days (CodeRabbit)
+    description: CodeRabbit only. Optional number of past days to query when Start date and End date are not supplied.
   accounts.limit:
-    name: Results per page
+    name: Results per page (CodeRabbit)
+    description: CodeRabbit only. Optional page size for the metrics query; leave blank for the adapter default.
   accounts.start_date:
-    name: Start date
+    name: Start date (CodeRabbit)
+    description: CodeRabbit only. Optional inclusive date in YYYY-MM-DD format; use with End date for an explicit reporting window.
   accounts.end_date:
-    name: End date
+    name: End date (CodeRabbit)
+    description: CodeRabbit only. Optional inclusive date in YYYY-MM-DD format; defaults to the current date when Start date is used.
   accounts.project_id:
-    name: Billing project ID
+    name: Billing project ID (Gemini)
+    description: Gemini only. Google Cloud project that owns the BigQuery billing export and the service-account permissions.
   accounts.billing_export_table:
-    name: Billing export table
+    name: Billing export table (Gemini)
+    description: Gemini only. Fully qualified BigQuery table in project.dataset.table format, for example my-project.billing.gcp_billing_export_v1_XXXXXX.
   accounts.currency:
-    name: Billing currency
+    name: Billing currency (Gemini)
+    description: Gemini only. Optional expected currency, usually USD or CNY. Mixed or unsupported currencies are reported instead of combined.
   accounts.mode:
     name: Provider mode
+    description: OpenCode Go only. Set local_stats to document local CLI statistics; this does not report remaining subscription quota. Leave blank for a configuration-only status entry.
   accounts.opt_in:
-    name: Enable provider CLI
+    name: Enable provider CLI (Alibaba)
+    description: Alibaba Coding Plan only. Turn on only when automated bl usage coding-plan polling is permitted for your plan and the cookie is stored in secrets.env.
   accounts.cli_path:
-    name: Provider CLI path
+    name: Provider CLI path (Alibaba)
+    description: Alibaba Coding Plan only. Path to the bl executable inside the add-on container, normally /usr/local/bin/bl. This is not the Mac Codex or Claude executable.
   accounts.timeout:
-    name: Provider CLI timeout
+    name: Provider CLI timeout (Alibaba)
+    description: Alibaba Coding Plan only. Maximum seconds allowed for the bl usage command; use a positive value such as 30.

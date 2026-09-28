@@ -31,11 +31,20 @@ DEFAULT_DISCOVERY_PREFIX = "homeassistant"
 DEFAULT_SECRETS_FILE = "/config/secrets.env"
 DEFAULT_STATE_FILENAME = "state.json"
 DEFAULT_CONFIG_FILENAME = "config.yaml"
+DIRECT_MQTT_PASSWORD_ENV = "AIUD_MQTT_PASSWORD_VALUE"
 
 _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_DIRECT_ACCOUNT_CREDENTIAL_ENV_RE = re.compile(r"^AIUD_ACCOUNT_CREDENTIAL_[0-9]+$")
 _PREFIX_RE = re.compile(r"^[A-Za-z0-9_/-]+$")
 _FORBIDDEN_OPTION_KEYS = ("value", "secret", "api_key", "token", "password")
-_SECRET_KEY_HINTS = ("password", "passwd", "secret", "token", "api_key", "apikey")
+_SECRET_KEY_HINTS = (
+    "password", "passwd", "secret", "token", "api_key", "apikey", "credential"
+)
+
+
+def _direct_credential_env(index: int) -> str:
+    """Return the private env slot used for a GUI-entered account credential."""
+    return f"AIUD_ACCOUNT_CREDENTIAL_{index}"
 
 
 class AddonOptionsError(ValueError):
@@ -184,7 +193,9 @@ def options_to_runtime(
     "poll_interval": int, "data_dir": str, "state_path": str,
     "discovery_prefix": str, "referenced_env_vars": [...]}``.
     ``referenced_env_vars`` names (never values) the secrets the entrypoint
-    must export to the collector process.
+    must export to the collector process. ``direct_secret_values`` is a
+    private handoff for GUI-entered credentials; callers should merge it into
+    the process environment and remove it before serializing runtime config.
     """
     if not isinstance(options, dict):
         raise AddonOptionsError("add-on options must be a JSON object")
@@ -200,6 +211,7 @@ def options_to_runtime(
             "(provider, account_id, credential_env)"
         )
     accounts: list[AccountConfig] = []
+    direct_secret_values: dict[str, str] = {}
     seen: set[str] = set()
     for i, raw in enumerate(raw_accounts):
         where = f"accounts[{i}]"
@@ -239,6 +251,14 @@ def options_to_runtime(
         
         if cred_env:
             cred_name = _require_env_name(cred_env, f"{where} 'credential_env'")
+            if (
+                cred_name == DIRECT_MQTT_PASSWORD_ENV
+                or _DIRECT_ACCOUNT_CREDENTIAL_ENV_RE.fullmatch(cred_name)
+            ):
+                raise AddonOptionsError(
+                    f"{where}: credential_env {cred_name!r} is reserved "
+                    "for add-on-managed credentials"
+                )
             if not env.get(cred_name, ""):
                 raise AddonOptionsError(
                     f"{where}: env var {cred_name!r} is unset or empty; "
@@ -248,12 +268,14 @@ def options_to_runtime(
                 )
             credential_ref = CredentialRef(env=cred_name)
         else:
-            # credential_value is provided directly
+            # Direct GUI credentials are moved into a private runtime env slot.
+            # The generated YAML contains only that slot name, never the value.
             if not isinstance(cred_value, str) or not cred_value.strip():
                 raise AddonOptionsError(
                     f"{where}: 'credential_value' must be a non-empty string"
                 )
-            credential_ref = CredentialRef(value=cred_value.strip())
+            credential_ref = CredentialRef(env=_direct_credential_env(i))
+            direct_secret_values[_direct_credential_env(i)] = cred_value
         
         # Build options dict from provider-specific fields
         account_options = {}
@@ -296,11 +318,18 @@ def options_to_runtime(
         or env.get("MQTT_PASSWORD_ENV", "").strip()
         or DEFAULT_MQTT_PASSWORD_ENV
     )
-    if username and not env.get(password_env, ""):
+    if username and _DIRECT_ACCOUNT_CREDENTIAL_ENV_RE.fullmatch(password_env):
+        raise AddonOptionsError(
+            f"'mqtt_password_env' value {password_env!r} is reserved "
+            "for add-on-managed account credentials"
+        )
+    password_value = str(options.get("mqtt_password_value", "") or "")
+    password_value_set = bool(password_value.strip())
+    if username and not password_value_set and not env.get(password_env, ""):
         raise AddonOptionsError(
             f"'mqtt_username' is set but env var {password_env!r} is unset "
-            "or empty; add it to the secrets file or clear 'mqtt_username' "
-            "for anonymous access"
+            "or empty; add it to the secrets file or set 'mqtt_password_value' "
+            "for protected GUI configuration"
         )
     prefix = (
         str(options.get("discovery_prefix", "") or "").strip()
@@ -336,11 +365,17 @@ def options_to_runtime(
     }
     if username:
         mqtt["username"] = username
-        mqtt["password_env"] = password_env
+        if password_value_set:
+            mqtt["password_env"] = DIRECT_MQTT_PASSWORD_ENV
+        else:
+            mqtt["password_env"] = password_env
 
     referenced = sorted({a.credential.env for a in accounts if a.credential.env})
     if username:
-        referenced = sorted(set(referenced) | {password_env})
+        referenced = sorted(
+            set(referenced)
+            | {DIRECT_MQTT_PASSWORD_ENV if password_value_set else password_env}
+        )
     return {
         "accounts": accounts,
         "mqtt": mqtt,
@@ -349,6 +384,7 @@ def options_to_runtime(
         "state_path": state_path,
         "discovery_prefix": prefix,
         "referenced_env_vars": referenced,
+        "direct_secret_values": direct_secret_values,
     }
 
 
@@ -469,7 +505,11 @@ def build_runtime_from_options_file(options_path: str) -> tuple[dict, dict]:
     )
     secrets = load_secrets_file(secrets_path)
     merged = _merged_env(None, secrets)
+    direct_mqtt_password = str(options.get("mqtt_password_value", "") or "")
+    if direct_mqtt_password.strip():
+        merged[DIRECT_MQTT_PASSWORD_ENV] = direct_mqtt_password
     runtime = options_to_runtime(options, environ=dict(os.environ), secrets=secrets)
+    merged.update(runtime.pop("direct_secret_values", {}))
     return runtime, merged
 
 
