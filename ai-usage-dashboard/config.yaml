@@ -3,7 +3,7 @@
 # -> Home Assistant dashboard. Configure via the add-on Configuration tab;
 # credentials are *names* resolved from a secrets env file (see README.md).
 name: AI Usage Dashboard
-version: 0.1.0
+version: 0.1.1
 slug: ai_usage_dashboard
 description: Poll AI provider usage and quota and publish Home Assistant MQTT discovery sensors.
 url: https://github.com/keithah/ai-usage-dashboard-addon

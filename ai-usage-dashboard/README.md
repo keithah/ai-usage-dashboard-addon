@@ -340,11 +340,11 @@ data_dir: "/data"            # Runtime data directory
 ### Account Configuration
 
 Each account requires:
-- `provider` - Provider name (openai, anthropic, etc.)
-- `account_id` - Unique identifier for this account
-- `display_name` - Human-readable name (optional)
-- `credential_env` OR `credential_value` - Credential source (see below)
-- `options` - Provider-specific configuration (JSON object)
+- `provider` - Select a supported provider from the Home Assistant dropdown.
+- `account_id` - Unique identifier for this account.
+- `display_name` - Human-readable name (optional).
+- `credential_env` OR `credential_value` - Credential source (see below).
+- Provider-specific fields are optional fields within each account object; unused fields are ignored.
 
 **Credential Configuration (choose one):**
 
@@ -365,61 +365,44 @@ accounts:
     account_id: primary
     display_name: OpenAI Primary
     credential_env: OPENAI_API_KEY  # or credential_value: sk-...
-    options:
-      usage_url: "https://api.openai.com/v1/organization/usage"
 ```
 
-### Provider-Specific Options
+### Provider-Specific Fields
 
-**OpenAI:**
-```yaml
-options:
-  usage_url: "https://api.openai.com/v1/organization/usage"
-  subscription_url: "https://api.openai.com/v1/organization/subscription"
-```
+Home Assistant add-on schemas do not support conditional fields. The Configuration tab
+therefore shows all provider-specific fields as optional fields; fill only those used
+by the selected provider.
 
-**Grok:**
 ```yaml
-options:
-  team_id: "team_abc123"
-```
-
-**OpenRouter:**
-```yaml
-options:
-  credits_url: "https://openrouter.ai/api/v1/credits"
-```
-
-**Gemini:**
-```yaml
-options:
-  project_id: "my-project-id"
-  billing_export_table: "my-project.billing_dataset.gcp_billing_export_v1_XXXXXX"
-  currency: "USD"  # Optional, defaults to USD
-```
-
-**CodeRabbit:**
-```yaml
-options:
-  organization_id: "org_123"  # or org_id
-  days: 30  # Lookback window
-  limit: 1000  # Results per page
-  start_date: "2026-01-01"  # Optional, overrides days
-  end_date: "2026-01-31"  # Optional, defaults to today
-```
-
-**OpenCode Go:**
-```yaml
-options:
-  mode: "local_stats"
-```
-
-**Alibaba Coding Plan:**
-```yaml
-options:
-  opt_in: true
-  cli_path: "/usr/local/bin/bl"
-  timeout: 30
+accounts:
+  - provider: grok
+    account_id: team
+    credential_env: XAI_MANAGEMENT_KEY
+    team_id: "team_abc123"
+  - provider: coderabbit
+    account_id: reviews
+    credential_env: CODERABBIT_API_KEY
+    organization_id: "org_123"
+    days: 30
+    limit: 1000
+    start_date: "2026-01-01"  # Optional; overrides days
+    end_date: "2026-01-31"    # Optional; defaults to today
+  - provider: gemini
+    account_id: billing
+    credential_env: GEMINI_SERVICE_ACCOUNT_KEY
+    project_id: "my-project-id"
+    billing_export_table: "my-project.billing_dataset.gcp_billing_export_v1_XXXXXX"
+    currency: "USD"
+  - provider: opencode_go
+    account_id: local
+    credential_value: configured
+    mode: "local_stats"
+  - provider: alibaba_coding_plan
+    account_id: coding
+    credential_env: ALIBABA_CODING_PLAN_COOKIE
+    opt_in: true
+    cli_path: "/usr/local/bin/bl"
+    timeout: 30
 ```
 
 ## State Persistence

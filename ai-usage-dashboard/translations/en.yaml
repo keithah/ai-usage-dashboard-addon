@@ -24,40 +24,16 @@ configuration:
   accounts:
     name: Provider accounts
     description: >-
-      Add one account object per provider. credential_env is the variable name
-      in /config/secrets.env, never the raw credential. options is a JSON object.
-      Setup guides are below.
+      Add one account object per provider. Use the provider dropdown, account ID,
+      and either a credential environment variable name or direct credential value.
+      Provider-specific fields below are optional and only apply to the selected provider.
 
-      OpenAI: create an API key at https://platform.openai.com/api-keys and use
-      credential_env OPENAI_API_KEY. Anthropic: create a key at
-      https://console.anthropic.com/settings/keys and use ANTHROPIC_API_KEY.
-
-      Grok: create an xAI management key with billing access at
-      https://console.x.ai and use XAI_MANAGEMENT_KEY; options JSON is
-      {"team_id":"your_team_id"}.
-
-      OpenRouter: create a management key at
-      https://openrouter.ai/settings/keys and use OPENROUTER_API_KEY; options
-      JSON is {"mode":"credits"}. This reports purchased, used, and remaining
-      USD credits from the account endpoint.
-
-      Gemini: enable Cloud Billing export to BigQuery, create a service account
-      with BigQuery Job User and BigQuery Data Viewer, and store its JSON key as
-      GEMINI_SERVICE_ACCOUNT_KEY. Set options JSON to
-      {"project_id":"billing_query_project","billing_export_table":"project.dataset.table"}.
-      This reports real current-month Gemini-related cost from the export.
-
-      CodeRabbit: create an API key at https://coderabbit.ai/settings/api and
-      use CODERABBIT_API_KEY; options JSON is {"organization_id":"your_org_id"}
-      or {"org_id":"your_org_id"}. org_id takes precedence when both are set.
-
-      Alibaba Coding Plan: install the official bl CLI, use
-      ALIBABA_CODING_PLAN_COOKIE, and set options JSON to
-      {"opt_in":true,"cli_path":"bl","timeout":30}.
-
-      OpenCode Go and Muse Code currently expose local/configuration data only;
-      their subscription quota APIs are not public. Kimi and DeepSeek require
-      their normal API keys and do not need provider-specific options.
+      OpenAI: use an API key with organization read access. Anthropic: use an API key.
+      Grok: set team_id and use a management key. OpenRouter: use a management key.
+      Gemini: set project_id and billing_export_table and use a service-account JSON key.
+      CodeRabbit: set organization_id and use an API key. Alibaba Coding Plan: set
+      opt_in, cli_path, and timeout and use the bl cookie. Kimi and DeepSeek use
+      their normal API keys. OpenCode Go and Muse Code expose configuration-only data.
   accounts.provider:
     name: Provider
     description: "Select a supported provider: openai, anthropic, kimi, deepseek, opencode_go, muse_code, alibaba_coding_plan, grok, openrouter, gemini, or coderabbit."
@@ -70,6 +46,32 @@ configuration:
   accounts.credential_env:
     name: Credential environment variable
     description: Name only, for example OPENROUTER_API_KEY. Do not paste the secret here.
-  accounts.options:
-    name: Provider options (JSON)
-    description: Use the provider-specific JSON setup shown in the Provider accounts instructions.
+  accounts.credential_value:
+    name: Direct credential value
+    description: Optional direct credential for testing. Prefer credential_env with /config/secrets.env for production.
+  accounts.team_id:
+    name: Team ID
+  accounts.organization_id:
+    name: Organization ID
+  accounts.days:
+    name: Lookback days
+  accounts.limit:
+    name: Results per page
+  accounts.start_date:
+    name: Start date
+  accounts.end_date:
+    name: End date
+  accounts.project_id:
+    name: Billing project ID
+  accounts.billing_export_table:
+    name: Billing export table
+  accounts.currency:
+    name: Billing currency
+  accounts.mode:
+    name: Provider mode
+  accounts.opt_in:
+    name: Enable provider CLI
+  accounts.cli_path:
+    name: Provider CLI path
+  accounts.timeout:
+    name: Provider CLI timeout
