@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 import http.client
 import json
@@ -67,6 +69,42 @@ def test_normalize_codex_rate_limits_returns_only_normalized_oauth_metrics():
     assert "accessToken" not in json.dumps(result)
 
 
+def test_normalize_codex_rate_limits_live_app_server_shape():
+    """Exact shape returned by `codex app-server` account/rateLimits/read (2026-09)."""
+    result = normalize_codex_rate_limits(
+        {
+            "rateLimits": {
+                "limitId": "codex",
+                "limitName": None,
+                "primary": {"usedPercent": 0, "windowDurationMins": 300, "resetsAt": 1790641244},
+                "secondary": {"usedPercent": 42.5, "windowDurationMins": 10080, "resetsAt": 1791228044},
+                "credits": {"hasCredits": False, "unlimited": False, "balance": None},
+                "individualLimit": None,
+                "spendControlReached": False,
+                "planType": "team",
+                "rateLimitReachedType": None,
+            },
+            "rateLimitsByLimitId": {"codex": {"primary": {"usedPercent": 0}}},
+            "rateLimitResetCredits": {"availableCount": 3, "credits": [{"id": "secret-id", "title": "Full reset"}]},
+            "accountId": "acct-uuid-must-not-leak",
+            "rateLimitUpsell": None,
+        }
+    )
+    assert result["plan_type"] == "team"
+    assert result["rate_limits"] == [
+        {"name": "primary", "used_percent": 0.0, "remaining_percent": 100.0, "window_seconds": 18000, "reset_at": 1790641244},
+        {"name": "secondary", "used_percent": 42.5, "remaining_percent": 57.5, "window_seconds": 604800, "reset_at": 1791228044},
+    ]
+    dumped = json.dumps(result)
+    assert "acct-uuid" not in dumped and "secret-id" not in dumped and "credits" not in dumped
+
+
+@pytest.mark.parametrize("payload", [None, [], "x", 3, {"rateLimits": None}, {"rateLimits": "nope"}, {"rateLimits": {"planType": 5}}])
+def test_normalize_codex_rate_limits_tolerates_non_dict_payloads(payload):
+    result = normalize_codex_rate_limits(payload)
+    assert result["rate_limits"] == [] and result["plan_type"] is None and result["authenticated"] is True
+
+
 def _usage_record(ts: str, input_tokens: int) -> str:
     return json.dumps(
         {
@@ -127,6 +165,61 @@ def test_aggregate_claude_usage_sums_current_month_without_returning_transcript_
         "session_files": 1,
     }
     assert "message" not in json.dumps(result)
+
+
+def _dup_record(ts: str, msg_id: str | None, req_id: str | None, tokens: int) -> str:
+    rec: dict = {"type": "assistant", "timestamp": ts, "message": {"usage": {"input_tokens": tokens}}}
+    if msg_id is not None:
+        rec["message"]["id"] = msg_id
+    if req_id is not None:
+        rec["requestId"] = req_id
+    return json.dumps(rec)
+
+
+def test_aggregate_claude_usage_counts_each_api_response_once_across_files(tmp_path):
+    projects = tmp_path / "projects"
+    (projects / "a").mkdir(parents=True)
+    (projects / "b").mkdir(parents=True)
+    ts = "2026-09-20T12:00:00Z"
+    (projects / "a" / "s.jsonl").write_text(
+        "\n".join([
+            _dup_record(ts, "msg_1", "req_1", 100),
+            _dup_record(ts, "msg_1", "req_1", 100),   # same line replayed in same file
+            _dup_record(ts, "msg_2", "req_2", 10),
+            _dup_record(ts, None, "req_3", 1),        # no message id -> cannot dedupe, counted
+            _dup_record(ts, None, "req_3", 1),
+        ]) + "\n"
+    )
+    (projects / "b" / "resumed.jsonl").write_text(_dup_record(ts, "msg_1", "req_1", 100) + "\n")  # resumed session copy
+
+    result = aggregate_claude_usage(projects, now=datetime(2026, 9, 28, tzinfo=timezone.utc))
+
+    assert result["input_tokens"] == 100 + 10 + 1 + 1
+    assert result["session_files"] == 1  # file b contributed nothing new
+
+
+def test_aggregate_claude_usage_skips_files_untouched_before_month_start(tmp_path, monkeypatch):
+    projects = tmp_path / "projects"
+    projects.mkdir()
+    old = projects / "old.jsonl"
+    old.write_text(_usage_record("2026-09-20T12:00:00Z", 500) + "\n")  # in-window content...
+    august = datetime(2026, 8, 15, tzinfo=timezone.utc).timestamp()
+    os.utime(old, (august, august))  # ...but file mtime says it hasn't changed since August
+    fresh = projects / "fresh.jsonl"
+    fresh.write_text(_usage_record("2026-09-20T12:00:00Z", 7) + "\n")
+
+    opened = []
+    real_open = Path.open
+
+    def spy_open(self, *a, **k):
+        opened.append(self.name)
+        return real_open(self, *a, **k)
+
+    monkeypatch.setattr(Path, "open", spy_open)
+    result = aggregate_claude_usage(projects, now=datetime(2026, 9, 28, tzinfo=timezone.utc))
+
+    assert result["input_tokens"] == 7
+    assert "old.jsonl" not in opened and "fresh.jsonl" in opened
 
 
 def test_aggregate_claude_usage_skips_malformed_records_and_keeps_counting(tmp_path):
@@ -237,6 +330,9 @@ def _self_signed(tmp_path: Path, key_mode: int = 0o600) -> tuple[Path, Path]:
             "-keyout", str(key), "-out", str(cert), "-days", "1",
             "-subj", "/CN=127.0.0.1",
             "-addext", "subjectAltName=IP:127.0.0.1",
+            "-addext", "basicConstraints=critical,CA:TRUE",
+            "-addext", "keyUsage=critical,digitalSignature,keyEncipherment,keyCertSign",
+            "-addext", "extendedKeyUsage=serverAuth",
         ],
         check=True,
         capture_output=True,
@@ -473,6 +569,20 @@ def test_capture_reports_tools_that_are_not_signed_in(tmp_path):
     result = bridge.capture_session("work", tmp_path / "sessions", codex_home=codex, claude_config_dir=claude)
     assert result == {"codex": "captured", "claude": "not signed in"}
     assert not (tmp_path / "sessions" / "work" / "claude").exists()
+
+
+def test_recapture_after_signout_removes_stale_credential(tmp_path):
+    codex, claude = _fake_cli_homes(tmp_path)
+    sessions = tmp_path / "sessions"
+    bridge.capture_session("work", sessions, codex_home=codex, claude_config_dir=claude)
+    stale = sessions / "work" / "claude" / ".credentials.json"
+    assert stale.exists()
+    (claude / ".credentials.json").unlink()  # user signed out of Claude
+
+    result = bridge.capture_session("work", sessions, codex_home=codex, claude_config_dir=claude)
+
+    assert result == {"codex": "captured", "claude": "not signed in"}
+    assert not stale.exists()
 
 
 def test_capture_only_selected_tool(tmp_path):

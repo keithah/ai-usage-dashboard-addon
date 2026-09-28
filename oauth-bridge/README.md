@@ -23,7 +23,10 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
   -keyout "$HOME/.config/aiud/bridge-key.pem" \
   -out "$HOME/.config/aiud/bridge-cert.pem" \
   -subj "/CN=aiud-oauth-bridge" \
-  -addext "subjectAltName=IP:192.168.42.176"
+  -addext "subjectAltName=IP:192.168.42.176" \
+  -addext "basicConstraints=critical,CA:TRUE" \
+  -addext "keyUsage=critical,digitalSignature,keyEncipherment,keyCertSign" \
+  -addext "extendedKeyUsage=serverAuth"
 chmod 600 "$HOME/.config/aiud/bridge-key.pem"
 ```
 

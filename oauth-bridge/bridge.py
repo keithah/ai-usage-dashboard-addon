@@ -124,8 +124,18 @@ def _number(value: Any) -> float | None:
         return None
 
 
-def normalize_codex_rate_limits(payload: dict[str, Any]) -> dict[str, Any]:
-    """Reduce Codex app-server output to a secret-free metrics document."""
+def normalize_codex_rate_limits(payload: Any) -> dict[str, Any]:
+    """Reduce Codex app-server ``account/rateLimits/read`` output to a secret-free document.
+
+    Live shape (verified against codex app-server): ``result.rateLimits`` is a
+    dict with window entries ``primary``/``secondary`` of
+    ``{usedPercent, windowDurationMins, resetsAt}`` plus non-window metadata
+    (``planType``, ``credits``, ``limitId`` ...). Older/alternate spellings
+    (``limitWindowSeconds``, ``resetAt``, snake_case, list form) are still
+    accepted. Only numeric metrics are copied; ids, titles and tokens are not.
+    """
+    if not isinstance(payload, dict):
+        payload = {}
     raw = payload.get("rateLimits") or payload.get("rate_limits") or {}
     limits: list[dict[str, Any]] = []
     if isinstance(raw, dict):
@@ -139,7 +149,10 @@ def normalize_codex_rate_limits(payload: dict[str, Any]) -> dict[str, Any]:
             continue
         used = _number(value.get("usedPercent", value.get("used_percent")))
         window = _number(value.get("limitWindowSeconds", value.get("window_seconds")))
-        reset = value.get("resetAt", value.get("reset_at"))
+        if window is None:
+            mins = _number(value.get("windowDurationMins", value.get("window_minutes")))
+            window = mins * 60 if mins is not None else None
+        reset = value.get("resetsAt", value.get("resetAt", value.get("reset_at")))
         if used is None and window is None and reset is None:
             continue
         item: dict[str, Any] = {"name": str(name)}
@@ -151,10 +164,15 @@ def normalize_codex_rate_limits(payload: dict[str, Any]) -> dict[str, Any]:
         if isinstance(reset, (int, float)) and not isinstance(reset, bool):
             item["reset_at"] = reset
         limits.append(item)
+    plan = None
+    if isinstance(raw, dict):
+        plan = raw.get("planType", raw.get("plan_type"))
+    if plan is None:
+        plan = payload.get("planType", payload.get("plan_type"))
     return {
         "authenticated": True,
         "auth_mode": "oauth",
-        "plan_type": payload.get("planType", payload.get("plan_type")),
+        "plan_type": plan if isinstance(plan, str) else None,
         "rate_limits": limits,
     }
 
@@ -180,12 +198,20 @@ def aggregate_claude_usage(projects_dir: Path, *, now: datetime | None = None) -
         "cache_read_input_tokens": 0,
     }
     matched_files: set[Path] = set()
+    # Claude Code can write the same API response to more than one transcript
+    # line/file (resumed sessions, sidechains); count each response once.
+    seen: set[tuple[str, str]] = set()
     if not projects_dir.is_dir():
         totals["total_tokens"] = 0
         totals["session_files"] = 0
         return totals
+    start_ts = start.timestamp()
     for path in projects_dir.rglob("*.jsonl"):
         try:
+            # Files untouched since before the month started cannot hold
+            # in-window records; skip them without parsing.
+            if path.stat().st_mtime < start_ts:
+                continue
             with path.open(encoding="utf-8") as stream:
                 for line in stream:
                     try:
@@ -199,6 +225,13 @@ def aggregate_claude_usage(projects_dir: Path, *, now: datetime | None = None) -
                     usage = message.get("usage") if isinstance(message, dict) else None
                     if timestamp is None or timestamp < start or not isinstance(usage, dict):
                         continue
+                    msg_id = message.get("id")
+                    req_id = record.get("requestId")
+                    if isinstance(msg_id, str) and isinstance(req_id, str):
+                        key = (msg_id, req_id)
+                        if key in seen:
+                            continue
+                        seen.add(key)
                     matched_files.add(path)
                     for key in totals:
                         if key == "total_tokens":
@@ -607,10 +640,16 @@ def capture_session(
             raise SystemExit(f"unknown tool {tool!r}")
         src_dir = sources[tool]
         files = [src_dir / f for f in _CAPTURE_FILES[tool]]
+        dest_dir = sessions_dir / name / tool
         if not all(f.is_file() for f in files):
+            # Don't leave a stale credential from an earlier capture behind
+            # for a tool that is no longer signed in.
+            for f in _CAPTURE_FILES[tool]:
+                stale = dest_dir / f
+                if stale.is_symlink() or stale.exists():
+                    stale.unlink()
             results[tool] = "not signed in"
             continue
-        dest_dir = sessions_dir / name / tool
         if (sessions_dir / name).is_symlink() or dest_dir.is_symlink():
             raise SystemExit(f"refusing to capture into symlinked session {name!r}")
         dest_dir.mkdir(parents=True, exist_ok=True)
@@ -656,7 +695,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--codex-bin", default=os.environ.get("CODEX_BIN", "codex"))
     parser.add_argument("--claude-bin", default=os.environ.get("CLAUDE_BIN", "claude"))
     parser.add_argument("--claude-projects-dir", default=os.environ.get("CLAUDE_PROJECTS_DIR", str(Path.home() / ".claude" / "projects")))
-    parser.add_argument("--timeout", type=float, default=20.0)
+    parser.add_argument("--timeout", type=float, default=10.0,
+                        help="per-CLI-call timeout in seconds; keep below the add-on poll interval")
     parser.add_argument(
         "--sessions-dir",
         default=os.environ.get("AIUD_SESSIONS_DIR", str(Path.home() / ".config" / "aiud" / "sessions")),
