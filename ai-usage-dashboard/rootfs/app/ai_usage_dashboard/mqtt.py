@@ -26,16 +26,25 @@ AVAILABILITY_OFFLINE = "offline"
 _SECRET_KEY_HINTS = ("api_key", "apikey", "token", "secret", "password", "bearer", "credential")
 # LLM usage counters legitimately contain the word "token" (input_tokens,
 # cache_read_input_tokens, total_tokens ...). They are numeric metric keys, not
-# credentials. Only this exact shape is exempt from the secret-key guard, and
-# only when the value is a plain number.
-_TOKEN_COUNTER_RE = re.compile(r"^(?:[a-z0-9]+_)*tokens$")
+# credentials. Only these exact, known counter names are exempt from the
+# "token" hint, and only when the value is a plain number (state payload) or a
+# Unit enum string (metric_units map). Anything else — refresh_tokens,
+# access_tokens, a counter carrying a string — is still treated as a secret.
+_TOKEN_COUNTER_KEYS = frozenset({
+    "input_tokens",
+    "output_tokens",
+    "total_tokens",
+    "cache_creation_input_tokens",
+    "cache_read_input_tokens",
+    "reasoning_tokens",
+    "prompt_tokens",
+    "completion_tokens",
+})
 _UNIT_VALUES = frozenset(u.value for u in Unit)
 
 
 def _is_token_counter(key: str, value: object) -> bool:
-    """A token *counter* is a `*_tokens` key whose value is a number (state
-    payload) or one of the fixed Unit enum strings (metric_units map)."""
-    if not _TOKEN_COUNTER_RE.fullmatch(key):
+    if key not in _TOKEN_COUNTER_KEYS:
         return False
     if isinstance(value, bool):
         return False

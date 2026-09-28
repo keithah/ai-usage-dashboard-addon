@@ -183,6 +183,9 @@ def test_state_payload_allows_numeric_token_counters():
         {"metrics": {"bearer_tokens": 5}},
         {"metrics": {"password_tokens": 5}},
         {"metrics": {"credential_tokens": 5}},
+        {"metrics": {"refresh_tokens": 5}},              # numeric *_tokens but not a known usage counter
+        {"metrics": {"access_tokens": 5}},
+        {"metrics": {"id_tokens": 5}},
     ],
 )
 def test_state_payload_still_rejects_secret_shaped_keys(payload):
