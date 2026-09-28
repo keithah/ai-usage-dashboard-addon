@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import ssl
 import time
 import urllib.error
 import urllib.parse
@@ -97,15 +98,17 @@ class SafeHttpClient:
     _handler_accepts_body: bool | None = field(default=None, init=False, repr=False)
     _handler_identity: object = field(default=None, init=False, repr=False)
 
-    def get(self, url: str, headers: dict | None = None) -> HttpResponse:
-        return self.request("GET", url, headers=headers)
+    def get(self, url: str, headers: dict | None = None, ca_file: str | None = None) -> HttpResponse:
+        return self.request("GET", url, headers=headers, ca_file=ca_file)
 
     def post(self, url: str, headers: dict | None = None, json: dict | None = None, form: dict | None = None) -> HttpResponse:
         return self.request("POST", url, headers=headers, json=json, form=form)
 
-    def request(self, method: str, url: str, headers: dict | None = None, json: dict | None = None, form: dict | None = None) -> HttpResponse:
+    def request(self, method: str, url: str, headers: dict | None = None, json: dict | None = None, form: dict | None = None, ca_file: str | None = None) -> HttpResponse:
         if json is not None and form is not None:
             raise ValueError("request accepts either json or form, not both")
+        if ca_file is not None and urllib.parse.urlsplit(url).scheme != "https":
+            raise ValueError("ca_file is only meaningful for https URLs")
         safe_headers = _redact_headers(headers or {})
         request_body = None
         if json is not None:
@@ -151,7 +154,7 @@ class SafeHttpClient:
                     else:
                         resp = self.handler(method, url, headers or {}, self.timeout)  # type: ignore[operator]
                 else:
-                    resp = self._perform(method, url, headers or {}, request_body)
+                    resp = self._perform(method, url, headers or {}, request_body, ca_file=ca_file)
             except (TimeoutError, ConnectionError, OSError) as exc:
                 if attempts > self.max_retries:
                     raise HttpTransientError(
@@ -198,9 +201,19 @@ class SafeHttpClient:
             _ = safe_headers
             return resp
 
-    def _perform(self, method: str, url: str, headers: dict, request_body: bytes | None = None) -> HttpResponse:
+    def _perform(self, method: str, url: str, headers: dict, request_body: bytes | None = None, ca_file: str | None = None) -> HttpResponse:
         req = urllib.request.Request(url, method=method, headers=dict(headers), data=request_body)
-        opener = urllib.request.build_opener(_SafeRedirectHandler(original_url=url))
+        handlers: list = [_SafeRedirectHandler(original_url=url)]
+        if ca_file is not None:
+            # Pin trust to the operator-provided CA (e.g. a self-signed bridge
+            # certificate) instead of the system store. Hostname verification
+            # stays on; certificate validation is never disabled.
+            try:
+                context = ssl.create_default_context(cafile=ca_file)
+            except (OSError, ssl.SSLError) as exc:
+                raise HttpError(f"{method} {url} CA file unusable: {type(exc).__name__}") from None
+            handlers.append(urllib.request.HTTPSHandler(context=context))
+        opener = urllib.request.build_opener(*handlers)
         try:
             with opener.open(req, timeout=self.timeout) as fh:
                 status = getattr(fh, "status", 200)

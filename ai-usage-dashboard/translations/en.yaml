@@ -39,6 +39,16 @@ configuration:
       usage/billing read access, and credential_env OPENAI_API_KEY_PRIMARY.
       Anthropic uses provider anthropic and credential_env ANTHROPIC_API_KEY;
       its API exposes API usage/rate limits, not Claude.ai subscription quota.
+      OAuth setup (no provider API key): use provider codex_oauth for the
+      authenticated Codex CLI on the Mac and provider claude_code_oauth for the
+      authenticated Claude Code CLI. For both, run the included metrics-only
+      OAuth bridge on the Mac, set oauth_bridge_url to its https:// URL, set
+      oauth_bridge_ca_file to the bridge certificate copied into /config, and
+      put the bridge bearer token in credential_env. Codex reports OAuth
+      rate-limit windows. Claude Code reports consumed token usage from local
+      CLI transcripts for the current month; Claude Max remaining quota is not
+      exposed by a supported API. The bridge never copies OAuth files into the
+      add-on and never accepts provider API keys.
       OpenRouter uses provider openrouter and a management key. Grok uses
       provider grok, a management key, and Team ID. Kimi and DeepSeek use
       providers kimi or deepseek and their normal API keys. CodeRabbit uses
@@ -49,11 +59,13 @@ configuration:
       Coding Plan uses provider alibaba_coding_plan, opt_in enabled, the bl
       cookie, CLI path, and timeout. OpenCode Go and Muse Code are diagnostic
       configuration entries only; no documented subscription-quota API is
-      polled. Mac Codex or Claude CLI login files are not copied into this HA
-      container, so use the provider API credential requested above.
+      polled. Mac Codex or Claude CLI login files are never copied into this HA
+      container: use codex_oauth/claude_code_oauth with the local OAuth bridge
+      (bridge bearer token in credential_env), or an API credential for the
+      API-based providers above.
   accounts.provider:
     name: Provider
-    description: Select the provider for this row. Use openai for OpenAI API usage, anthropic for Claude API usage, openrouter for OpenRouter credits, grok for xAI team usage, gemini for Google Cloud billing, coderabbit for review metrics, kimi or deepseek for API usage, alibaba_coding_plan for the Coding Plan CLI, or opencode_go/muse_code for configuration-only entries.
+    description: Select the provider for this row. Use codex_oauth for the authenticated Codex CLI via the local OAuth bridge (no API key), claude_code_oauth for the authenticated Claude Code CLI via the same bridge, openai for OpenAI API usage, anthropic for Claude API usage, openrouter for OpenRouter credits, grok for xAI team usage, gemini for Google Cloud billing, coderabbit for review metrics, kimi or deepseek for API usage, alibaba_coding_plan for the Coding Plan CLI, or opencode_go/muse_code for configuration-only entries.
   accounts.account_id:
     name: Account ID
     description: Stable unique ID used in entity names, for example primary, work, or billing. Use a different ID for each account of the same provider.
@@ -62,7 +74,7 @@ configuration:
     description: Optional friendly name shown in Home Assistant sensors, for example OpenAI production or Claude work.
   accounts.credential_env:
     name: Credential environment variable
-    description: Recommended method. Enter only a variable name, such as OPENAI_API_KEY_PRIMARY or ANTHROPIC_API_KEY, then put NAME=value in /config/secrets.env. Do not paste the secret here.
+    description: Enter only a variable name. For API providers this references an API credential in /config/secrets.env. For codex_oauth and claude_code_oauth it references the bearer token generated for the local OAuth bridge; it is not a provider API key.
   accounts.credential_value:
     name: Direct credential value
     description: Optional protected form field for a secret or service-account JSON. Use only when you are not using credential_env; credential_env in /config/secrets.env is preferred for backups and portability.
@@ -105,3 +117,12 @@ configuration:
   accounts.timeout:
     name: Provider CLI timeout (Alibaba)
     description: Alibaba Coding Plan only. Maximum seconds allowed for the bl usage command; use a positive value such as 30.
+  accounts.oauth_bridge_url:
+    name: OAuth bridge URL
+    description: Required for codex_oauth and claude_code_oauth. HTTPS URL of the metrics-only bridge running on the Mac that owns the authenticated CLI sessions, for example https://192.168.42.10:8768. Plain http:// is rejected unless it points at localhost, because the bridge token is sent as a bearer header. Do not expose this bridge to the internet.
+  accounts.oauth_bridge_ca_file:
+    name: OAuth bridge CA certificate
+    description: Optional for codex_oauth and claude_code_oauth. Path inside the add-on to the bridge's certificate (PEM), for example /config/bridge-ca.pem, so a self-signed bridge certificate can be verified. Omit if the bridge certificate is already trusted. Certificate verification is never disabled.
+  accounts.oauth_session:
+    name: OAuth session name
+    description: Optional for codex_oauth and claude_code_oauth. Selects which captured CLI sign-in on the Mac this row reports, so you can track several Codex or Claude accounts. Leave empty to follow the CLI's current live login. To add another account, sign in to it normally on the Mac (codex login / claude login), run python3 oauth-bridge/bridge.py capture NAME, then enter NAME here; sign out and repeat for each further account. NAME is 1-32 lowercase letters, digits, '-' or '_' and cannot be 'default'.

@@ -3,7 +3,7 @@
 # -> Home Assistant dashboard. Configure via the add-on Configuration tab;
 # credentials are *names* resolved from a secrets env file (see README.md).
 name: AI Usage Dashboard
-version: 0.1.3
+version: 0.2.0
 slug: ai_usage_dashboard
 description: Poll AI provider usage and quota and publish Home Assistant MQTT discovery sensors.
 url: https://github.com/keithah/ai-usage-dashboard-addon
@@ -41,7 +41,7 @@ schema:
   discovery_prefix: str?
   data_dir: str?
   accounts:
-    - provider: list(openai|anthropic|grok|openrouter|gemini|coderabbit|kimi|deepseek|opencode_go|muse_code|alibaba_coding_plan)
+    - provider: list(openai|anthropic|codex_oauth|claude_code_oauth|grok|openrouter|gemini|coderabbit|kimi|deepseek|opencode_go|muse_code|alibaba_coding_plan)
       account_id: str
       display_name: str?
       credential_env: str?
@@ -60,3 +60,6 @@ schema:
       opt_in: bool?
       cli_path: str?
       timeout: int?
+      oauth_bridge_url: url?
+      oauth_bridge_ca_file: str?
+      oauth_session: str?

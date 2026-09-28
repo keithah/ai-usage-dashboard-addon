@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.keithah.aiud-oauth-bridge</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/python3</string>
+    <string>REPLACE_WITH_REPOSITORY/oauth-bridge/bridge.py</string>
+    <string>--host</string>
+    <string>0.0.0.0</string>
+    <string>--port</string>
+    <string>8768</string>
+    <string>--token-file</string>
+    <string>REPLACE_WITH_HOME/.config/aiud/bridge-token</string>
+    <string>--tls-cert</string>
+    <string>REPLACE_WITH_HOME/.config/aiud/bridge-cert.pem</string>
+    <string>--tls-key</string>
+    <string>REPLACE_WITH_HOME/.config/aiud/bridge-key.pem</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>REPLACE_WITH_REPOSITORY/oauth-bridge</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- launchd's default PATH omits user CLI installs; codex/claude live in ~/.local/bin. -->
+    <key>PATH</key>
+    <string>REPLACE_WITH_HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>REPLACE_WITH_HOME/Library/Logs/aiud-oauth-bridge.log</string>
+  <key>StandardErrorPath</key>
+  <string>REPLACE_WITH_HOME/Library/Logs/aiud-oauth-bridge.err.log</string>
+</dict>
+</plist>

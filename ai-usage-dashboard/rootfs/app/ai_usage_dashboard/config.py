@@ -12,6 +12,8 @@ from .models import AccountConfig, CredentialRef
 SUPPORTED_PROVIDERS = (
     "openai",
     "anthropic",
+    "codex_oauth",
+    "claude_code_oauth",
     "kimi",
     "deepseek",
     "opencode_go",

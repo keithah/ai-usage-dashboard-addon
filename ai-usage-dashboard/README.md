@@ -337,9 +337,46 @@ discovery_prefix: "homeassistant"  # MQTT discovery prefix
 data_dir: "/data"            # Runtime data directory
 ```
 
-### Account Configuration
+**OAuth Configuration (no provider API keys):**
 
-Each account requires:
+The add-on supports OAuth-owned CLI sessions through the separate metrics-only
+bridge in [`oauth-bridge/README.md`](../oauth-bridge/README.md). The bridge runs
+on the Mac where Codex and Claude Code are already signed in; it does not copy
+OAuth files into Home Assistant and does not accept OpenAI or Anthropic API
+keys.
+
+```yaml
+accounts:
+  - provider: codex_oauth
+    account_id: personal
+    display_name: Codex OAuth
+    credential_env: AIUD_OAUTH_BRIDGE_TOKEN
+    oauth_bridge_url: https://MAC_LAN_IP:8768
+    oauth_bridge_ca_file: /config/bridge-ca.pem
+  - provider: claude_code_oauth
+    account_id: personal
+    display_name: Claude Code OAuth
+    credential_env: AIUD_OAUTH_BRIDGE_TOKEN
+    oauth_bridge_url: https://MAC_LAN_IP:8768
+    oauth_bridge_ca_file: /config/bridge-ca.pem
+```
+
+`AIUD_OAUTH_BRIDGE_TOKEN` is only the private bearer token between Home
+Assistant and the local bridge. Put it in `/config/secrets.env`. The bridge
+must be reached over HTTPS (plain `http://` is only accepted for
+`localhost`); copy the bridge's certificate to `/config/bridge-ca.pem` and
+reference it with `oauth_bridge_ca_file`, or omit that field if the
+certificate is already trusted. Codex reports
+OAuth rate-limit windows. Claude Code reports consumed token usage from local
+CLI transcripts for the current UTC month; Claude Max remaining quota is not
+available through a supported API, so the bridge does not scrape Claude.ai.
+
+To track **several** Codex or Claude accounts, sign in to each one on the Mac
+in turn and run `python3 oauth-bridge/bridge.py capture <name>` after each
+sign-in (see `oauth-bridge/README.md`). Then add one row per account with
+`oauth_session: <name>`; rows without `oauth_session` follow the CLI's live
+login.
+
 - `provider` - Select a supported provider from the Home Assistant dropdown.
 - `account_id` - Unique identifier for this account.
 - `display_name` - Human-readable name (optional).

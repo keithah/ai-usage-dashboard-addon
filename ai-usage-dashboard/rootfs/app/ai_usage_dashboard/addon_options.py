@@ -281,7 +281,8 @@ def options_to_runtime(
         account_options = {}
         for key in ['team_id', 'organization_id', 'days', 'limit', 'start_date', 
                     'end_date', 'project_id', 'billing_export_table', 'currency',
-                    'mode', 'opt_in', 'cli_path', 'timeout']:
+                    'mode', 'opt_in', 'cli_path', 'timeout', 'oauth_bridge_url',
+                    'oauth_bridge_ca_file', 'oauth_session']:
             if key in raw:
                 account_options[key] = raw[key]
         
