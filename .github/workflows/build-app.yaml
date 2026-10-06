@@ -13,7 +13,7 @@ on:
 jobs:
   prepare:
     name: Prepare
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     outputs:
       architectures: ${{ steps.info.outputs.architectures }}
       build_matrix: ${{ steps.matrix.outputs.matrix }}
@@ -97,7 +97,7 @@ jobs:
     name: Publish multi-arch manifest
     needs: [prepare, build]
     if: inputs.publish
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     permissions:
       id-token: write
       packages: write
