@@ -8,7 +8,7 @@ on:
 
 jobs:
   find:
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     outputs:
       apps: ${{ steps.apps.outputs.addons_list }}
     steps:
@@ -22,7 +22,7 @@ jobs:
     strategy:
       matrix:
         path: ${{ fromJson(needs.find.outputs.apps) }}
-    runs-on: ubuntu-latest
+    runs-on: ubicloud-standard-2
     steps:
       - uses: actions/checkout@v4
       - uses: frenck/action-addon-linter@v2.21
